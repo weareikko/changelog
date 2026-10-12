@@ -1,4 +1,4 @@
-import semver from 'semver';
+import semver, { type ReleaseType, type SemVer } from 'semver';
 import type { ChangeLevel } from './changelog.js';
 import { ConfigError } from './errors.js';
 import { listTags, type Git } from './git.js';
@@ -6,28 +6,102 @@ import { listTags, type Git } from './git.js';
 /** The `--version` value that computes the next version from the entries. */
 export const AUTO_VERSION = 'auto';
 
-/**
- * The version after `current` for a release of this kind of change. From
- * 1.0.0: breaking → major, feature → minor, fix → patch. On 0.x: breaking →
- * minor, else patch. A prerelease gets the next prerelease with the same
- * identifier (1.0.0-rc.1 → 1.0.0-rc.2).
- */
-export function nextVersion(current: string, change: ChangeLevel): string {
-  const version = semver.parse(current);
-  if (!version) {
-    throw new ConfigError(`The current version "${current}" is not a semantic version.`, {
-      hint: 'Pass it with --current (or CHANGELOG_CURRENT_VERSION), e.g. --current 1.2.0.',
-    });
-  }
-  if (version.prerelease.length > 0) return version.inc('prerelease').version;
-  if (version.major === 0) return version.inc(change === 'breaking' ? 'minor' : 'patch').version;
-  const release = { breaking: 'major', feature: 'minor', fix: 'patch' } as const;
-  return version.inc(release[change]).version;
+export interface VersionState {
+  /** The version to bump: a stable version or a prerelease. */
+  current: string;
+  /** The latest stable version: the highest stable version tag, or 0.0.0. */
+  stable: string;
+  /**
+   * The identifier of `.changelog/prerelease` (`alpha`, `beta`, `rc`), or
+   * null without the file.
+   */
+  preid: string | null;
+}
+
+export interface NextVersion {
+  version: string;
+  /** The prerelease that this stable version promotes, if any. */
+  promotes: string | null;
 }
 
 /** The version of a `1.2.0` or `v1.2.0` tag, or null for another tag (`1`, `latest`). */
 function tagVersion(tag: string): string | null {
   return semver.valid(tag.replace(/^v/, ''));
+}
+
+function parse(version: string): SemVer {
+  const parsed = semver.parse(version);
+  if (!parsed) {
+    throw new ConfigError(`The current version "${version}" is not a semantic version.`, {
+      hint: 'Pass it with --current (or CHANGELOG_CURRENT_VERSION), e.g. --current 1.2.0.',
+    });
+  }
+  return parsed;
+}
+
+/**
+ * The bump of a stable version for a kind of change. From 1.0.0: breaking →
+ * major, feature → minor, fix → patch. On 0.x: breaking → minor, else patch.
+ */
+function releaseType(version: SemVer, change: ChangeLevel): 'major' | 'minor' | 'patch' {
+  if (version.major === 0) return change === 'breaking' ? 'minor' : 'patch';
+  return ({ breaking: 'major', feature: 'minor', fix: 'patch' } as const)[change];
+}
+
+function inc(version: SemVer | string, type: ReleaseType, preid?: string): string {
+  return new semver.SemVer(String(version)).inc(type, preid).version;
+}
+
+/**
+ * The next version, or null when there is nothing to release. `change` is
+ * the kind of change of the entries, or null without entries.
+ *
+ * - Stable, no prerelease file: the bump of {@link releaseType}.
+ * - Stable, prerelease file: the first prerelease of that bump (`1.1.0` →
+ *   `1.2.0-rc.0`).
+ * - Prerelease P with base B, prerelease file: when the bump of the stable
+ *   version is above B, its first prerelease; else the first prerelease of B
+ *   for a new identifier (`1.2.0-beta.3` → `1.2.0-rc.0`); else the next
+ *   prerelease (`1.2.0-rc.0` → `1.2.0-rc.1`).
+ * - Prerelease P with base B, no prerelease file: the stable version that
+ *   promotes P: B, or the bump of the stable version when it is above B. It
+ *   needs no entry.
+ */
+export function nextVersion(
+  { current, stable, preid }: VersionState,
+  change: ChangeLevel | null,
+): NextVersion | null {
+  const version = parse(current);
+  const base = `${version.major}.${version.minor}.${version.patch}`;
+  const latest = parse(stable);
+  const target = change ? inc(latest, releaseType(latest, change)) : base;
+
+  if (version.prerelease.length === 0) {
+    if (!change) return null;
+    const type = releaseType(version, change);
+    return {
+      version: preid ? inc(version, `pre${type}`, preid) : inc(version, type),
+      promotes: null,
+    };
+  }
+
+  if (!preid) {
+    return { version: semver.gt(target, base) ? target : base, promotes: current };
+  }
+
+  if (!change) return null;
+  let next: string;
+  if (semver.gt(target, base)) next = `${target}-${preid}.0`;
+  else if (version.prerelease[0] !== preid) next = `${base}-${preid}.0`;
+  else next = inc(version, 'prerelease', preid);
+
+  if (!semver.gt(next, version)) {
+    throw new ConfigError(
+      `The prerelease identifier "${preid}" gives ${next}, which is not above ${current}.`,
+      { hint: 'Use an identifier that sorts after the current one (alpha, beta, rc).' },
+    );
+  }
+  return { version: next, promotes: null };
 }
 
 /**
@@ -41,11 +115,18 @@ export async function findVersionTag(git: Git): Promise<string> {
 }
 
 /**
- * The current version: `current` when given, else the version of
- * {@link findVersionTag}, else 0.0.0.
+ * The current version (`current` when given, else the version of the
+ * highest version tag) and the latest stable version (the highest stable
+ * version tag). Both default to 0.0.0.
  */
-export async function resolveCurrentVersion(current: string, git: Git): Promise<string> {
-  if (current) return current;
-  const tag = await findVersionTag(git);
-  return tag ? tagVersion(tag)! : '0.0.0';
+export async function resolveVersions(
+  current: string,
+  git: Git,
+): Promise<{ current: string; stable: string }> {
+  const versions = (await listTags(git))
+    .map(tagVersion)
+    .filter((version): version is string => version !== null)
+    .toSorted(semver.rcompare);
+  const stable = versions.find((version) => semver.prerelease(version) === null) ?? '0.0.0';
+  return { current: current || (versions[0] ?? '0.0.0'), stable };
 }

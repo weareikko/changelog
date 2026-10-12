@@ -2,15 +2,18 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   buildRelease,
+  type ChangeLevel,
   formatSection,
   FRAGMENTS_DIRECTORY,
   insertSection,
+  PRERELEASE_FILE,
   type ReleaseFragment,
+  STABLE_RELEASE,
   type ReleasePull,
 } from './changelog.js';
 import type { Config } from './config.js';
 import { ConfigError } from './errors.js';
-import { readFragments } from './fragments.js';
+import { readFragments, readPrerelease } from './fragments.js';
 import { findAddingCommit, listCommitsSince } from './git.js';
 import {
   formatDotenv,
@@ -21,7 +24,7 @@ import {
   writeOutputFile,
 } from './output.js';
 import type { Platform } from './platform.js';
-import { AUTO_VERSION, findVersionTag, nextVersion, resolveCurrentVersion } from './version.js';
+import { AUTO_VERSION, findVersionTag, nextVersion, resolveVersions } from './version.js';
 
 interface DatedFragment extends ReleaseFragment {
   time: number;
@@ -96,10 +99,34 @@ function writeOutputs(config: Config, runtime: Runtime, version: string, body: s
 }
 
 /**
+ * The version and body of an `--version auto` release, or null when there is
+ * nothing to release. A stable release that promotes a prerelease without
+ * new entries gets a one-line body.
+ */
+async function autoRelease(
+  config: Config,
+  runtime: Runtime,
+  preid: string | null,
+  built: { body: string | null; change: ChangeLevel | null },
+): Promise<{ version: string; body: string } | null> {
+  const versions = await resolveVersions(config.current, runtime.git);
+  const next = nextVersion({ ...versions, preid }, built.change);
+  if (!next) return null;
+  const reason = next.promotes
+    ? `stable release of ${next.promotes}`
+    : `${built.change} change since ${versions.current}`;
+  runtime.stdout(`Version ${next.version}: ${reason}${preid ? ` (prerelease "${preid}")` : ''}.`);
+  return {
+    version: next.version,
+    body: built.body ?? STABLE_RELEASE[config.locale](next.promotes!),
+  };
+}
+
+/**
  * Fold the fragments, and the changes of `skipAuthors` merged since the
  * previous tag, into a new CHANGELOG.md section, and delete the fragments.
- * With `--version auto`, the entries give the next version. Returns the exit
- * code.
+ * With `--version auto`, the entries and `.changelog/prerelease` give the
+ * next version. Returns the exit code.
  */
 export async function release(
   config: Config,
@@ -111,6 +138,16 @@ export async function release(
       runtime,
       `${platform.unavailable}: no ${platform.noun} references and no entries from skip-authors.`,
     );
+  }
+
+  const auto = config.version === AUTO_VERSION;
+  const prerelease = auto ? readPrerelease(runtime.cwd) : { id: null, errors: [] };
+  if (prerelease.errors.length > 0) {
+    reportIssues(runtime, prerelease.errors);
+    runtime.stderr(
+      `Invalid ${PRERELEASE_FILE}: CHANGELOG.md and ${FRAGMENTS_DIRECTORY}/ are unchanged.`,
+    );
+    return 1;
   }
 
   const fragments = await resolveFragments(platform, runtime);
@@ -128,8 +165,12 @@ export async function release(
     return 1;
   }
 
-  const auto = config.version === AUTO_VERSION;
-  if (body === null || change === null) {
+  const next = auto
+    ? await autoRelease(config, runtime, prerelease.id, { body, change })
+    : body === null
+      ? null
+      : { version: config.version, body };
+  if (!next) {
     runtime.stdout(
       `No fragment in ${FRAGMENTS_DIRECTORY}/ and no ${platform.noun} from skip-authors: CHANGELOG.md is unchanged.`,
     );
@@ -137,13 +178,8 @@ export async function release(
     return 0;
   }
 
-  let version = config.version;
-  if (auto) {
-    const current = await resolveCurrentVersion(config.current, runtime.git);
-    version = nextVersion(current, change);
-    runtime.stdout(`Version ${version}: ${change} change since ${current}.`);
-  }
-  const section = formatSection(version, config.date, body);
+  const { version } = next;
+  const section = formatSection(version, config.date, next.body);
 
   const changelogPath = join(runtime.cwd, 'CHANGELOG.md');
   if (!existsSync(changelogPath)) {
@@ -158,6 +194,6 @@ export async function release(
   for (const file of used) rmSync(join(runtime.cwd, file));
 
   runtime.stdout(section);
-  writeOutputs(config, runtime, version, body);
+  writeOutputs(config, runtime, version, next.body);
   return 0;
 }

@@ -239,7 +239,7 @@ describe('release', () => {
       ['--version', 'auto', '--current', '1.1.0', '--dotenv', 'release.env'],
       {
         files: { '.changelog/a.md': '### Added\n- A\n### Fixed\n- B\n' },
-        git: tableGit({ [added('.changelog/a.md')]: '' }),
+        git: tableGit({ [added('.changelog/a.md')]: '', 'tag --merged HEAD': '1.1.0\n' }),
       },
     );
     expect(await code).toBe(0);
@@ -261,7 +261,7 @@ describe('release', () => {
     const fromEnv = run(['--version', 'auto'], {
       env: { CHANGELOG_CURRENT_VERSION: '0.4.7' },
       files: fragment,
-      git: tableGit({ [added('.changelog/a.md')]: '' }),
+      git: tableGit({ [added('.changelog/a.md')]: '', 'tag --merged HEAD': '0.4.7\n' }),
     });
     expect(await fromEnv.code).toBe(0);
     expect(fromEnv.read('CHANGELOG.md')).toContain('## 0.5.0 - 2026-10-12');
@@ -279,7 +279,7 @@ describe('release', () => {
       files: {
         '.changelog/sse.md': '### Removed\n\n- **BREAKING**: Remove the `sse` MCP transport\n',
       },
-      git: tableGit({ [added('.changelog/sse.md')]: '' }),
+      git: tableGit({ [added('.changelog/sse.md')]: '', 'tag --merged HEAD': '0\n0.9.9\n' }),
     });
     expect(await code).toBe(0);
     expect(read('CHANGELOG.md')).toContain('## 0.10.0 - 2026-10-12\n\n### Removed\n');
@@ -311,18 +311,139 @@ describe('release', () => {
   });
 
   it('writes an empty version when --version auto has nothing to release', async () => {
-    const { read, code } = run([
-      '--version',
-      'auto',
-      '--dotenv',
-      'release.env',
-      '--skip-authors',
-      '',
-    ]);
+    const { read, code } = run(
+      ['--version', 'auto', '--dotenv', 'release.env', '--skip-authors', ''],
+      { git: tableGit({ 'tag --merged HEAD': '1.0.0\n' }) },
+    );
     expect(await code).toBe(0);
     expect(read('CHANGELOG.md')).toBe(CHANGELOG);
     expect(read('release.env')).toBe('CHANGELOG_CHANGED=false\nCHANGELOG_VERSION=\n');
     expect(read('github-output')).toMatch(/\nversion<<(\S+)\n\n\1\n/);
+  });
+
+  describe('with --version auto and .changelog/prerelease', () => {
+    const tags = (list: string) => ({ 'tag --merged HEAD': list });
+
+    it('starts a prerelease from a stable version', async () => {
+      const { runtime, read, cwd, code } = run(['--version', 'auto', '--current', '1.1.0'], {
+        files: { '.changelog/prerelease': 'rc\n', '.changelog/a.md': '### Added\n- A\n' },
+        git: tableGit({ [added('.changelog/a.md')]: '', ...tags('1\n1.1.0\n') }),
+      });
+      expect(await code).toBe(0);
+      expect(runtime.out[0]).toBe(
+        'Version 1.2.0-rc.0: feature change since 1.1.0 (prerelease "rc").',
+      );
+      expect(read('CHANGELOG.md')).toContain('## 1.2.0-rc.0 - 2026-10-12\n\n### Added\n\n- A\n');
+      expect(existsSync(join(cwd, '.changelog/a.md'))).toBe(false);
+      expect(read('.changelog/prerelease')).toBe('rc\n');
+    });
+
+    it('moves from beta to rc, and to a major prerelease for a breaking entry', async () => {
+      const toRc = run(['--version', 'auto', '--current', '1.2.0-beta.3'], {
+        files: { '.changelog/prerelease': 'rc', '.changelog/a.md': '### Fixed\n- A\n' },
+        git: tableGit({ [added('.changelog/a.md')]: '', ...tags('1.1.0\n1.2.0-beta.3\n') }),
+      });
+      expect(await toRc.code).toBe(0);
+      expect(toRc.read('CHANGELOG.md')).toContain('## 1.2.0-rc.0 - 2026-10-12');
+
+      const breaking = run(['--version', 'auto'], {
+        files: { '.changelog/prerelease': 'rc', '.changelog/a.md': '### Changed\n- ⚠️ B\n' },
+        git: tableGit({ [added('.changelog/a.md')]: '', ...tags('1.1.0\n1.2.0-rc.1\n') }),
+      });
+      expect(await breaking.code).toBe(0);
+      expect(breaking.read('CHANGELOG.md')).toContain('## 2.0.0-rc.0 - 2026-10-12');
+    });
+
+    it('releases nothing in prerelease mode without entries', async () => {
+      const { read, code } = run(['--version', 'auto', '--skip-authors', ''], {
+        files: { '.changelog/prerelease': 'rc\n' },
+        git: tableGit(tags('1.1.0\n1.2.0-rc.0\n')),
+      });
+      expect(await code).toBe(0);
+      expect(read('CHANGELOG.md')).toBe(CHANGELOG);
+      expect(read('github-output')).toMatch(/^changed<<(\S+)\nfalse\n/);
+    });
+
+    it('promotes a prerelease without entries when the file is gone, in French too', async () => {
+      const { runtime, read, code } = run(
+        ['--version', 'auto', '--skip-authors', '', '--notes-file', 'notes.md'],
+        { git: tableGit(tags('1\n1.1.0\n1.2.0-rc.2\n')) },
+      );
+      expect(await code).toBe(0);
+      expect(runtime.out[0]).toBe('Version 1.2.0: stable release of 1.2.0-rc.2.');
+      expect(read('CHANGELOG.md')).toContain(
+        '## 1.2.0 - 2026-10-12\n\nStable release of 1.2.0-rc.2.\n\n## 1.0.0',
+      );
+      expect(read('notes.md')).toBe('Stable release of 1.2.0-rc.2.\n');
+      expect(read('github-output')).toMatch(/^changed<<(\S+)\ntrue\n\1\nversion<<(\S+)\n1\.2\.0\n/);
+
+      const french = run(['--version', 'auto', '--locale', 'fr', '--skip-authors', ''], {
+        git: tableGit(tags('1.1.0\n1.2.0-rc.2\n')),
+      });
+      expect(await french.code).toBe(0);
+      expect(french.read('CHANGELOG.md')).toContain(
+        '## 1.2.0 - 2026-10-12\n\nVersion stable de 1.2.0-rc.2.\n',
+      );
+    });
+
+    it('promotes a prerelease with its new entries', async () => {
+      const { read, code } = run(['--version', 'auto', '--current', '1.2.0-rc.2'], {
+        files: { '.changelog/a.md': '### Fixed\n- Last fix\n' },
+        git: tableGit({ [added('.changelog/a.md')]: '', ...tags('1.1.0\n1.2.0-rc.2\n') }),
+      });
+      expect(await code).toBe(0);
+      expect(read('CHANGELOG.md')).toContain('## 1.2.0 - 2026-10-12\n\n### Fixed\n\n- Last fix\n');
+      expect(read('CHANGELOG.md')).not.toContain('Stable release');
+    });
+
+    it('counts entries from skip-authors in prerelease mode', async () => {
+      const { read, code } = run(['--version', 'auto', '--current', '1.2.0-rc.0'], {
+        env: GITHUB,
+        files: { '.changelog/prerelease': 'rc\n' },
+        git: tableGit({
+          ...tags('1.1.0\n1.2.0-rc.0\n'),
+          'log --first-parent --format=%H 1.2.0-rc.0..HEAD': 'c1\n',
+        }),
+        fetch: routeFetch({
+          '/repos/acme/repo/commits/c1/pulls': [
+            {
+              number: 8,
+              title: 'chore(deps): update y',
+              merged_at: '2026-10-12',
+              base: { ref: 'main' },
+              user: { login: 'renovate[bot]' },
+            },
+          ],
+        }),
+      });
+      expect(await code).toBe(0);
+      expect(read('CHANGELOG.md')).toContain('## 1.2.0-rc.1 - 2026-10-12\n\n### Dependencies\n');
+    });
+
+    it('changes nothing when the prerelease file is invalid', async () => {
+      const { runtime, read, code } = run(['--version', 'auto'], {
+        files: {
+          '.changelog/prerelease': 'release candidate\n',
+          '.changelog/a.md': '### Added\n- A\n',
+        },
+      });
+      expect(await code).toBe(1);
+      expect(runtime.err.slice(1)).toEqual([
+        '.changelog/prerelease:1: "release candidate" is not a valid prerelease identifier. Use letters, digits and hyphens, not only digits (alpha, beta, rc).',
+        'Invalid .changelog/prerelease: CHANGELOG.md and .changelog/ are unchanged.',
+      ]);
+      expect(read('.changelog/a.md')).toBe('### Added\n- A\n');
+    });
+
+    it('ignores the prerelease file with an explicit version', async () => {
+      const { read, code } = run(['--version', '1.2.0', '--skip-authors', ''], {
+        files: { '.changelog/prerelease': '', '.changelog/a.md': '### Added\n- A\n' },
+        git: tableGit({ [added('.changelog/a.md')]: '' }),
+      });
+      expect(await code).toBe(0);
+      expect(read('CHANGELOG.md')).toContain('## 1.2.0 - 2026-10-12');
+      expect(read('.changelog/prerelease')).toBe('');
+    });
   });
 
   it('folds fragments without references when the API is unavailable', async () => {

@@ -72,6 +72,31 @@ describe('check', () => {
     ]);
   });
 
+  it('accepts a valid prerelease file', async () => {
+    const { runtime, code } = run([], { files: { ...VALID, '.changelog/prerelease': 'rc\n' } });
+    expect(await code).toBe(0);
+    expect(runtime.out).toEqual([
+      '1 fragment(s) valid.',
+      'Prerelease "rc": releases are prereleases.',
+    ]);
+  });
+
+  it('reports an invalid prerelease file in the Code Quality report', async () => {
+    const { cwd, runtime, code } = run(['--codequality', 'cq.json'], {
+      files: { ...VALID, '.changelog/prerelease': 'rc\nbeta\n' },
+    });
+    expect(await code).toBe(1);
+    expect(runtime.err).toEqual([
+      '.changelog/prerelease:2: The prerelease file has more than one line. Write only the prerelease identifier.',
+    ]);
+    expect(JSON.parse(readFileSync(join(cwd, 'cq.json'), 'utf8'))).toMatchObject([
+      {
+        check_name: 'changelog-prerelease',
+        location: { path: '.changelog/prerelease', lines: { begin: 2 } },
+      },
+    ]);
+  });
+
   it('writes an empty Code Quality report when all is valid', async () => {
     const { cwd, code } = run(['--codequality', 'cq.json']);
     expect(await code).toBe(0);

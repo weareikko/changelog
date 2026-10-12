@@ -86,13 +86,13 @@ The previous tag is the tag reachable from `HEAD` with the highest semantic vers
 
 `release --version auto` gets the next version from the entries that it folds (the fragments and the entries of `--skip-authors`). It bumps the current version: `--current <version>` (or `CHANGELOG_CURRENT_VERSION`), else the version of the previous tag, else `0.0.0`.
 
-| Entries                                              | From 1.0.0 | On 0.x | On a prerelease |
-| ---------------------------------------------------- | ---------- | ------ | --------------- |
-| A breaking entry                                     | major      | minor  | prerelease      |
-| An entry under `Added` (`Ajouté`), no breaking entry | minor      | patch  | prerelease      |
-| Other entries only (fixes, `Dependencies`)           | patch      | patch  | prerelease      |
+| Entries                                              | From 1.0.0 | On 0.x |
+| ---------------------------------------------------- | ---------- | ------ |
+| A breaking entry                                     | major      | minor  |
+| An entry under `Added` (`Ajouté`), no breaking entry | minor      | patch  |
+| Other entries only (fixes, `Dependencies`)           | patch      | patch  |
 
-A prerelease gets the next prerelease with the same identifier (`1.0.0-rc.1` → `1.0.0-rc.2`). To release a stable version, a major version without a breaking entry, or a first prerelease, pass the version with `--version`.
+The `.changelog/prerelease` file turns these versions into prereleases: see [Prereleases](#prereleases). To release a major version without a breaking entry, pass the version with `--version`.
 
 A breaking entry starts with one of these markers, in any case, after an optional package prefix (`**CLI**: ` or `**@scope/pkg:** `):
 
@@ -105,6 +105,30 @@ A breaking entry starts with one of these markers, in any case, after an optiona
 ```
 
 When there is nothing to release, `release --version auto` changes no file, writes `changed=false` and an empty `version`, and exits with 0.
+
+### Prereleases
+
+The file `.changelog/prerelease` holds one line: the prerelease identifier, for example `alpha`, `beta` or `rc` (letters, digits and hyphens, not only digits). It is not a fragment: `release` never deletes it, and `check` validates it. With this file, `release --version auto` releases prereleases. The bump comes from the entries, with the rules above, from the latest stable version tag (`S`):
+
+| Current version | `.changelog/prerelease` | Entries                      | Next version                                                                                                          |
+| --------------- | ----------------------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `1.1.0`         | `rc`                    | an `Added` entry             | `1.2.0-rc.0`                                                                                                          |
+| `1.2.0-rc.0`    | `rc`                    | a fix                        | `1.2.0-rc.1`                                                                                                          |
+| `1.2.0-beta.3`  | `rc`                    | a fix                        | `1.2.0-rc.0`: a new identifier starts at 0                                                                            |
+| `1.2.0-rc.1`    | `rc`                    | a breaking entry (`S` 1.1.0) | `2.0.0-rc.0`: the bump of `S` is above `1.2.0`                                                                        |
+| `1.2.0-rc.2`    | none                    | none                         | `1.2.0`: the stable release, with the line `Stable release of 1.2.0-rc.2.` (`Version stable de …` with `--locale fr`) |
+| `1.2.0-rc.2`    | none                    | a fix                        | `1.2.0`, with the entries                                                                                             |
+| `1.2.0-rc.2`    | none                    | a breaking entry (`S` 1.1.0) | `2.0.0`, with the entries                                                                                             |
+
+With the file and without entries, nothing is released. The new identifier must sort after the current one (`alpha` < `beta` < `rc`), or `release` fails.
+
+The flow on GitHub with the [Release](#release) workflow:
+
+1. **Enter:** a pull request adds `.changelog/prerelease` (`rc`). The next merge with entries releases `1.2.0-rc.0`.
+2. **During:** each merge with entries releases the next prerelease. A pull request that changes the file (`beta` to `rc`) starts the new identifier at 0.
+3. **Exit:** a pull request deletes `.changelog/prerelease`. Its merge releases the stable version, with or without new entries.
+
+A manual run of the workflow with an explicit bump (`bump=preminor`, `bump=minor`, …) still works and ignores the file.
 
 Without API access (for example on your computer without a token), `release` warns, adds no reference and no entry from `--skip-authors`, and still folds the fragments.
 
@@ -332,7 +356,7 @@ gh workflow run publish.yml -f bump=prerelease -f preid=rc # 1.1.0-rc.1
 gh workflow run publish.yml -f bump=minor                  # 1.1.0 after 1.1.0-rc.1
 ```
 
-On a prerelease line, each merge releases the next prerelease (`1.1.0-rc.2`).
+For a series of prereleases, use the [prerelease file](#prereleases) instead of manual runs.
 
 The workflow:
 
