@@ -1,6 +1,6 @@
 {
   "name": "@weareikko/changelog",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "description": "Validate .changelog/ fragments on pull and merge requests and fold them into CHANGELOG.md at release time, on GitHub Actions and GitLab CI.",
   "keywords": [
     "changelog",
