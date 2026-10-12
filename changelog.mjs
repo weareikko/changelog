@@ -120,10 +120,22 @@ export function buildRelease({ version, date, repositoryUrl, fragments }) {
     if (entries.length > 0) blocks.push(`### ${title}\n\n${entries.join('\n')}`);
   }
 
+  // Pull request definitions first, by number (generated or written in a fragment),
+  // then the other definitions in the order they appear.
+  const pullNumber = (line) => Number(line.match(/^\[#(\d+)\]:/)?.[1] ?? Number.NaN);
   const definitions = [
-    ...[...prs].sort((a, b) => a - b).map((pr) => `[#${pr}]: ${repositoryUrl}/pull/${pr}`),
+    ...[...prs].map((pr) => `[#${pr}]: ${repositoryUrl}/pull/${pr}`),
     ...links,
-  ].filter((line, index, all) => all.indexOf(line) === index);
+  ]
+    .filter((line, index, all) => all.indexOf(line) === index)
+    .map((line, index) => ({ line, index, pr: pullNumber(line) }))
+    .sort((a, b) => {
+      if (Number.isNaN(a.pr) || Number.isNaN(b.pr)) {
+        return Number.isNaN(a.pr) - Number.isNaN(b.pr) || a.index - b.index;
+      }
+      return a.pr - b.pr;
+    })
+    .map(({ line }) => line);
   if (definitions.length > 0) blocks.push(definitions.join('\n'));
 
   const body = blocks.join('\n\n');

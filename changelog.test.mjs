@@ -119,6 +119,20 @@ describe('buildRelease', () => {
     assert.equal(result.body, '### Added\n\n- A [[#127]]\n\n[#127]: https://github.com/acme/repo/pull/127');
   });
 
+  it('sorts pull request definitions by number, before other definitions', () => {
+    const result = buildRelease({
+      ...base,
+      fragments: [
+        { file: 'a.md', text: '### Added\n- A\n\n[x]: https://x.test\n', pr: 129 },
+        { file: 'b.md', text: '### Added\n- B [[#127]]\n\n[#127]: https://github.com/acme/repo/pull/127\n[abc1234]: https://c.test\n', pr: 128 },
+      ],
+    });
+    assert.equal(
+      result.body.split('\n\n').at(-1),
+      ['[#127]: https://github.com/acme/repo/pull/127', '[#129]: https://github.com/acme/repo/pull/129', '[x]: https://x.test', '[abc1234]: https://c.test'].join('\n'),
+    );
+  });
+
   it('deduplicates link definitions', () => {
     const result = buildRelease({
       ...base,
