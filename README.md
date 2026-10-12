@@ -188,7 +188,7 @@ The action sets up Node.js 24 (it stays on the `PATH` for the next steps) and ru
 
 The tool detects GitLab CI from `GITLAB_CI`, `CI_PROJECT_ID` or `CI_SERVER_URL`. It reads `CI_SERVER_URL`, `CI_PROJECT_ID`, `CI_PROJECT_URL`, `CI_COMMIT_BRANCH` and the `CI_MERGE_REQUEST_*` variables. In a GitLab CI job, `CI_JOB_TOKEN` is enough on GitLab 18.4 or later: see [Tokens](#tokens).
 
-GitLab Code Quality reports show the fragment errors in the merge request widget. A `dotenv` report gives `CHANGELOG_CHANGED` and `CHANGELOG_VERSION` to the next jobs, and `--notes-file` gives the release notes to `release-cli`.
+GitLab Code Quality reports show the fragment errors in the merge request widget. A `dotenv` report gives `CHANGELOG_CHANGED` and `CHANGELOG_VERSION` to the next jobs, and `--notes-file` gives the release notes to the [`release` keyword](https://docs.gitlab.com/ci/yaml/#release), which runs `glab` in the job image.
 
 ```yaml
 stages: [test, release]
@@ -231,7 +231,7 @@ changelog:release:
 
 release:
   stage: release
-  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  image: registry.gitlab.com/gitlab-org/cli:latest
   needs: [changelog:release]
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH

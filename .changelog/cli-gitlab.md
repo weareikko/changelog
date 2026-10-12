@@ -11,6 +11,7 @@
 
 - The action runs `@weareikko/changelog` from npm at the version of its own `package.json`
 - `check` reads the pull request, its labels and its author from the event payload and lists the changed files with `git diff`: it makes no API call on GitHub, and the action completes a shallow clone first
+- A GitHub workflow that runs `npx @weareikko/changelog check` itself must check out with `fetch-depth: 0`
 - `release` only counts a pull request merged into the current branch, and stops on an API error instead of folding the fragments without references
 - An entry with a merge request reference (`[!N]`) also keeps its reference at release, on both platforms
 - `release` warns when it cannot look up pull requests (for example without `GITHUB_REPOSITORY`)
