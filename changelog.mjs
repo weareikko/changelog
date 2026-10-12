@@ -61,14 +61,15 @@ export function parseFragment(text, file) {
 }
 
 /**
- * Append a ` [[#N]]` reference to each top-level entry that has no `[#N]`
- * reference yet and does not mention the pull request.
+ * Append a ` [[#N]]` reference to each top-level entry that has no pull
+ * request (`[#N]`) or commit (`[abc1234]`) reference yet and does not mention
+ * the pull request.
  * @param {string[]} entries
  * @param {number} pr
  * @returns {{ entries: string[], added: boolean }}
  */
 export function addReference(entries, pr) {
-  const mention = new RegExp(`\\[#\\d+\\]|#${pr}(?!\\d)`);
+  const mention = new RegExp(`\\[(#\\d+|[0-9a-f]{7,40})\\]|#${pr}(?!\\d)`);
   let added = false;
   const result = entries.map((entry) => {
     if (!entry.startsWith('- ') || mention.test(entry)) return entry;

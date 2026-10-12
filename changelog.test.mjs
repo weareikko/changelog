@@ -68,6 +68,10 @@ describe('addReference', () => {
       added: true,
     });
     assert.deepEqual(addReference(['- Two [[#123]]'], 12), { entries: ['- Two [[#123]]'], added: false });
+    assert.deepEqual(addReference(['- Three [[915f084]]', '- Four [[915f084], [#3]]', '- Five [link]'], 12), {
+      entries: ['- Three [[915f084]]', '- Four [[915f084], [#3]]', '- Five [link] [[#12]]'],
+      added: true,
+    });
   });
 });
 
