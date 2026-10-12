@@ -52,9 +52,12 @@ export class GitHubPlatform implements Platform {
       });
     }
     const pulls = await this.client.listCommitPulls(sha);
-    const merged = pulls.find(
-      (pull) => pull.merged_at && (!this.config.branch || pull.base?.ref === this.config.branch),
-    );
+    const mergedPulls = pulls.filter((pull) => pull.merged_at);
+    // `gh stack merge` merges a stack into the trunk but keeps the base branch of each pull
+    // request: the commit is in the history of the current branch, so any merged pull request
+    // fits when none has the current branch as its base.
+    const merged =
+      mergedPulls.find((pull) => pull.base?.ref === this.config.branch) ?? mergedPulls[0];
     if (!merged) return null;
     return {
       number: merged.number,

@@ -109,7 +109,7 @@ describe('GitLabPlatform', () => {
     );
   });
 
-  it('finds the merged merge request into the current branch', async () => {
+  it('finds the merged merge request, into the current branch first', async () => {
     const fetchImpl = routeFetch({
       [`${API}/repository/commits/abc/merge_requests`]: [
         { iid: 1, state: 'opened', target_branch: 'main' },
@@ -126,6 +126,9 @@ describe('GitLabPlatform', () => {
       [`${API}/repository/commits/def/merge_requests`]: [
         { iid: 4, title: 'Bare', state: 'merged', target_branch: 'next' },
       ],
+      [`${API}/repository/commits/none/merge_requests`]: [
+        { iid: 5, state: 'opened', target_branch: 'main' },
+      ],
     });
     const gitlab = platform({ ...CI, CI_COMMIT_BRANCH: 'main' }, fetchImpl);
     expect(await gitlab.findMergedChange('abc')).toEqual({
@@ -134,12 +137,9 @@ describe('GitLabPlatform', () => {
       author: 'foxy',
       labels: ['deps'],
     });
-    expect(await gitlab.findMergedChange('def')).toBeNull();
-    expect(await platform(CI, fetchImpl).findMergedChange('def')).toEqual({
-      number: 4,
-      title: 'Bare',
-      author: undefined,
-      labels: [],
-    });
+    const bare = { number: 4, title: 'Bare', author: undefined, labels: [] };
+    expect(await gitlab.findMergedChange('def')).toEqual(bare);
+    expect(await platform(CI, fetchImpl).findMergedChange('def')).toEqual(bare);
+    expect(await gitlab.findMergedChange('none')).toBeNull();
   });
 });
