@@ -34,7 +34,6 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       prerelease: ${{ steps.version.outputs.prerelease }}
       dist-tag: ${{ steps.version.outputs.dist-tag }}
-      notes: ${{ steps.notes.outputs.notes }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -79,7 +78,7 @@ jobs:
 
       # The CLI of this commit releases itself: the action runs the published
       # package, and this version is not published yet. The CLI writes the
-      # `changed` and `body` outputs of this step to GITHUB_OUTPUT.
+      # `changed` output of this step to GITHUB_OUTPUT.
       - name: Fold changelog fragments
         id: changelog
         env:
@@ -90,30 +89,19 @@ jobs:
           node bin/changelog.js release --version "$VERSION"
 
       # Promoting a prerelease (1.1.0-rc.0 to 1.1.0) can have no new fragment:
-      # the prerelease already folded them. The GitHub release then says so.
-      - name: Release notes
-        id: notes
+      # the prerelease already folded them.
+      - name: Fail when there is nothing to release
+        if: steps.changelog.outputs.changed != 'true'
         env:
-          CHANGED: ${{ steps.changelog.outputs.changed }}
-          BODY: ${{ steps.changelog.outputs.body }}
           PREVIOUS: ${{ steps.version.outputs.previous }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          if [[ $CHANGED == true ]]; then
-            NOTES="$BODY"
-          elif [[ $PREVIOUS == *-* && $VERSION != *-* ]]; then
+          if [[ $PREVIOUS == *-* && $VERSION != *-* ]]; then
             echo "::notice::No fragment in .changelog/: stable release of $PREVIOUS."
-            NOTES="Stable release of $PREVIOUS."
-          else
-            echo "::error::No fragment in .changelog/: nothing to release."
-            exit 1
+            exit 0
           fi
-          DELIMITER="EOF_$(openssl rand -hex 16)"
-          {
-            echo "notes<<$DELIMITER"
-            echo "$NOTES"
-            echo "$DELIMITER"
-          } >> "$GITHUB_OUTPUT"
+          echo "::error::No fragment in .changelog/: nothing to release."
+          exit 1
 
       # Tags have no `v` prefix. The major tag (`1`) that `uses:
       # weareikko/changelog@1` reads moves to stable releases only.
@@ -180,11 +168,22 @@ jobs:
         with:
           tag: ${{ env.VERSION }}
           name: ${{ env.VERSION }}
-          body: ${{ needs.release.outputs.notes }}
+          body: Please refer to [CHANGELOG.md](${{ github.server_url }}/${{ github.repository }}/blob/${{ env.VERSION }}/CHANGELOG.md) for details.
           prerelease: ${{ env.PRERELEASE }}
           # GitHub's latest release follows the `latest` dist-tag on npm.
           makeLatest: ${{ env.PRERELEASE != 'true' }}
           allowUpdates: true
+
+      # npm can answer a few seconds after the publish that a new version does
+      # not exist yet: wait for it before npx installs it.
+      - name: Wait for the package on npm
+        run: |
+          for _ in $(seq 30); do
+            npm view "@weareikko/changelog@$VERSION" version --prefer-online | grep -qx "$VERSION" && exit 0
+            sleep 5
+          done
+          echo "::error::@weareikko/changelog@$VERSION is not on npm after 150 seconds."
+          exit 1
 
       # The action of the released tag runs the package that was just published.
       - name: Check the published package with the action
