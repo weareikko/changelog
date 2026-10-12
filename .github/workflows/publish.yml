@@ -45,9 +45,13 @@ jobs:
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: '24'
+          cache: npm
 
-      - name: Test
-        run: npm test
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check
+        run: npm run check
 
       # A prerelease version (with a `-`, e.g. 1.2.0-beta.0) goes to the `next`
       # dist-tag on npm, any other version to `latest`.
@@ -73,13 +77,17 @@ jobs:
             echo "dist-tag=$DIST_TAG"
           } >> "$GITHUB_OUTPUT"
 
-      # The action of this commit releases itself.
+      # The CLI of this commit releases itself: the action runs the published
+      # package, and this version is not published yet. The CLI writes the
+      # `changed` and `body` outputs of this step to GITHUB_OUTPUT.
       - name: Fold changelog fragments
         id: changelog
-        uses: ./
-        with:
-          command: release
-          version: ${{ steps.version.outputs.version }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          npm run build
+          node bin/changelog.js release --version "$VERSION"
 
       # Promoting a prerelease (1.1.0-rc.0 to 1.1.0) can have no new fragment:
       # the prerelease already folded them. The GitHub release then says so.
@@ -116,7 +124,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add CHANGELOG.md .changelog package.json
+          git add CHANGELOG.md .changelog package.json package-lock.json
           git commit -m "Release $VERSION"
           git tag "$VERSION"
           git push origin HEAD:main "refs/tags/$VERSION"
@@ -151,6 +159,13 @@ jobs:
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: '24'
+          cache: npm
+
+      # npm-publish runs with ignore-scripts: build here, not in prepublishOnly.
+      - name: Build
+        run: |
+          npm ci
+          npm run build
 
       # Trusted publishing (OIDC): no npm token.
       - name: Publish @weareikko/changelog
@@ -170,3 +185,9 @@ jobs:
           # GitHub's latest release follows the `latest` dist-tag on npm.
           makeLatest: ${{ env.PRERELEASE != 'true' }}
           allowUpdates: true
+
+      # The action of the released tag runs the package that was just published.
+      - name: Check the published package with the action
+        uses: ./
+        with:
+          command: check

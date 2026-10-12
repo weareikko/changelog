@@ -1,6 +1,13 @@
-import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
-import { addReference, buildRelease, insertSection, parseFragment, SECTIONS, titleToEntry } from './changelog.mjs';
+import { assert, describe, it } from 'vitest';
+import {
+  addReference,
+  buildRelease,
+  insertSection,
+  isFragmentPath,
+  parseFragment,
+  SECTIONS,
+  titleToEntry,
+} from './changelog.js';
 
 describe('parseFragment', () => {
   it('groups entries and link definitions by section', () => {
@@ -10,10 +17,13 @@ describe('parseFragment', () => {
       SECTIONS.en,
     );
     assert.deepEqual(errors, []);
-    assert.deepEqual([...sections], [
-      ['Added', ['- One', '- Two', '  continued']],
-      ['Fixed', ['- Three']],
-    ]);
+    assert.deepEqual(
+      [...sections],
+      [
+        ['Added', ['- One', '- Two', '  continued']],
+        ['Fixed', ['- Three']],
+      ],
+    );
     assert.deepEqual(links, ['[abc1234]: https://example.com/abc1234']);
   });
 
@@ -29,8 +39,15 @@ describe('parseFragment', () => {
   });
 
   it('rejects headings other than ###', () => {
-    const { errors } = parseFragment('## 1.0.0\n### Added\n- One\n#### Detail\n', 'a.md', SECTIONS.en);
-    assert.deepEqual(errors.map((error) => error.line), [1, 4]);
+    const { errors } = parseFragment(
+      '## 1.0.0\n### Added\n- One\n#### Detail\n',
+      'a.md',
+      SECTIONS.en,
+    );
+    assert.deepEqual(
+      errors.map((error) => error.line),
+      [1, 4],
+    );
     assert.match(errors[0].message, /not allowed/);
   });
 
@@ -44,7 +61,12 @@ describe('parseFragment', () => {
   it('rejects lines before the first section', () => {
     const { errors } = parseFragment('- One\n### Added\n- Two\n', 'b.md', SECTIONS.en);
     assert.deepEqual(errors, [
-      { file: 'b.md', line: 1, message: 'Line "- One" is outside of any section. A fragment starts with a "### <Section>" heading.' },
+      {
+        file: 'b.md',
+        line: 1,
+        message:
+          'Line "- One" is outside of any section. A fragment starts with a "### <Section>" heading.',
+      },
     ]);
   });
 
@@ -55,7 +77,11 @@ describe('parseFragment', () => {
   });
 
   it('uses the sections of the given locale', () => {
-    const french = parseFragment('### Ajouté\n- Un\n### Dépendances\n- Deux\n', 'a.md', SECTIONS.fr);
+    const french = parseFragment(
+      '### Ajouté\n- Un\n### Dépendances\n- Deux\n',
+      'a.md',
+      SECTIONS.fr,
+    );
     assert.deepEqual(french.errors, []);
     assert.deepEqual([...french.sections.keys()], ['Ajouté', 'Dépendances']);
 
@@ -85,30 +111,57 @@ describe('addReference', () => {
   });
 
   it('keeps entries that mention the pull request or already have a reference', () => {
-    assert.deepEqual(addReference(['- One (#12)', '- Two [[#123], [abc1234]]', '- Fix #120 crash'], '#12'), {
-      entries: ['- One (#12)', '- Two [[#123], [abc1234]]', '- Fix #120 crash [[#12]]'],
-      added: true,
+    assert.deepEqual(
+      addReference(['- One (#12)', '- Two [[#123], [abc1234]]', '- Fix #120 crash'], '#12'),
+      {
+        entries: ['- One (#12)', '- Two [[#123], [abc1234]]', '- Fix #120 crash [[#12]]'],
+        added: true,
+      },
+    );
+    assert.deepEqual(addReference(['- Two [[#123]]'], '#12'), {
+      entries: ['- Two [[#123]]'],
+      added: false,
     });
-    assert.deepEqual(addReference(['- Two [[#123]]'], '#12'), { entries: ['- Two [[#123]]'], added: false });
-    assert.deepEqual(addReference(['- Three [[915f084]]', '- Four [[915f084], [#3]]', '- Five [link]'], '#12'), {
-      entries: ['- Three [[915f084]]', '- Four [[915f084], [#3]]', '- Five [link] [[#12]]'],
-      added: true,
-    });
+    assert.deepEqual(
+      addReference(['- Three [[915f084]]', '- Four [[915f084], [#3]]', '- Five [link]'], '#12'),
+      {
+        entries: ['- Three [[915f084]]', '- Four [[915f084], [#3]]', '- Five [link] [[#12]]'],
+        added: true,
+      },
+    );
   });
 
   it('writes merge request references and keeps the ones of both platforms', () => {
-    assert.deepEqual(addReference(['- One', '- Two [[!3]]', '- Three [[#4]]', '- Four (!12)', '- Five !120'], '!12'), {
-      entries: ['- One [[!12]]', '- Two [[!3]]', '- Three [[#4]]', '- Four (!12)', '- Five !120 [[!12]]'],
-      added: true,
-    });
+    assert.deepEqual(
+      addReference(
+        ['- One', '- Two [[!3]]', '- Three [[#4]]', '- Four (!12)', '- Five !120'],
+        '!12',
+      ),
+      {
+        entries: [
+          '- One [[!12]]',
+          '- Two [[!3]]',
+          '- Three [[#4]]',
+          '- Four (!12)',
+          '- Five !120 [[!12]]',
+        ],
+        added: true,
+      },
+    );
   });
 });
 
 describe('titleToEntry', () => {
   it('removes a conventional commit prefix and upper-cases the first letter', () => {
-    assert.equal(titleToEntry('chore(deps): update dependency vitest to v4'), '- Update dependency vitest to v4');
+    assert.equal(
+      titleToEntry('chore(deps): update dependency vitest to v4'),
+      '- Update dependency vitest to v4',
+    );
     assert.equal(titleToEntry('fix!: drop node 18'), '- Drop node 18');
-    assert.equal(titleToEntry('Update actions/checkout action to v5 '), '- Update actions/checkout action to v5');
+    assert.equal(
+      titleToEntry('Update actions/checkout action to v5 '),
+      '- Update actions/checkout action to v5',
+    );
     assert.equal(titleToEntry('update dependency: x'), '- Update dependency: x');
   });
 });
@@ -118,7 +171,10 @@ describe('buildRelease', () => {
     version: '1.2.0',
     date: '2026-10-12',
     sections: SECTIONS.en,
-    references: { prefix: '#', url: (number) => `https://github.com/acme/repo/pull/${number}` },
+    references: {
+      prefix: '#' as const,
+      url: (number: number) => `https://github.com/acme/repo/pull/${number}`,
+    },
   };
 
   it('merges fragments in section order and adds pull request links', () => {
@@ -151,15 +207,24 @@ describe('buildRelease', () => {
         '[x]: https://x.test',
       ].join('\n'),
     );
-    assert.equal(result.body, result.section.split('\n').slice(2).join('\n'));
+    assert.equal(result.body, result.section!.split('\n').slice(2).join('\n'));
   });
 
   it('adds no link definition when every entry already has a reference', () => {
     const result = buildRelease({
       ...base,
-      fragments: [{ file: 'a.md', text: '### Added\n- A [[#127]]\n\n[#127]: https://github.com/acme/repo/pull/127\n', pr: 130 }],
+      fragments: [
+        {
+          file: 'a.md',
+          text: '### Added\n- A [[#127]]\n\n[#127]: https://github.com/acme/repo/pull/127\n',
+          pr: 130,
+        },
+      ],
     });
-    assert.equal(result.body, '### Added\n\n- A [[#127]]\n\n[#127]: https://github.com/acme/repo/pull/127');
+    assert.equal(
+      result.body,
+      '### Added\n\n- A [[#127]]\n\n[#127]: https://github.com/acme/repo/pull/127',
+    );
   });
 
   it('sorts pull request definitions by number, before other definitions', () => {
@@ -167,12 +232,21 @@ describe('buildRelease', () => {
       ...base,
       fragments: [
         { file: 'a.md', text: '### Added\n- A\n\n[x]: https://x.test\n', pr: 129 },
-        { file: 'b.md', text: '### Added\n- B [[#127]]\n\n[#127]: https://github.com/acme/repo/pull/127\n[abc1234]: https://c.test\n', pr: 128 },
+        {
+          file: 'b.md',
+          text: '### Added\n- B [[#127]]\n\n[#127]: https://github.com/acme/repo/pull/127\n[abc1234]: https://c.test\n',
+          pr: 128,
+        },
       ],
     });
     assert.equal(
       result.body.split('\n\n').at(-1),
-      ['[#127]: https://github.com/acme/repo/pull/127', '[#129]: https://github.com/acme/repo/pull/129', '[x]: https://x.test', '[abc1234]: https://c.test'].join('\n'),
+      [
+        '[#127]: https://github.com/acme/repo/pull/127',
+        '[#129]: https://github.com/acme/repo/pull/129',
+        '[x]: https://x.test',
+        '[abc1234]: https://c.test',
+      ].join('\n'),
     );
   });
 
@@ -184,7 +258,10 @@ describe('buildRelease', () => {
         { file: 'b.md', text: '### Added\n- B\n[x]: https://x.test\n', pr: 1 },
       ],
     });
-    assert.equal(result.body, '### Added\n\n- A [[#1]]\n- B [[#1]]\n\n[#1]: https://github.com/acme/repo/pull/1\n[x]: https://x.test');
+    assert.equal(
+      result.body,
+      '### Added\n\n- A [[#1]]\n- B [[#1]]\n\n[#1]: https://github.com/acme/repo/pull/1\n[x]: https://x.test',
+    );
   });
 
   it('adds pull requests under Dependencies, after the fragment entries', () => {
@@ -215,19 +292,33 @@ describe('buildRelease', () => {
   });
 
   it('builds a section from pull requests alone', () => {
-    const result = buildRelease({ ...base, fragments: [], pulls: [{ number: 5, title: 'chore(deps): update x' }] });
+    const result = buildRelease({
+      ...base,
+      fragments: [],
+      pulls: [{ number: 5, title: 'chore(deps): update x' }],
+    });
     assert.deepEqual(result.used, []);
-    assert.equal(result.section, '## 1.2.0 - 2026-10-12\n\n### Dependencies\n\n- Update x [[#5]]\n\n[#5]: https://github.com/acme/repo/pull/5');
+    assert.equal(
+      result.section,
+      '## 1.2.0 - 2026-10-12\n\n### Dependencies\n\n- Update x [[#5]]\n\n[#5]: https://github.com/acme/repo/pull/5',
+    );
   });
 
   it('writes GitLab references and French sections', () => {
     const result = buildRelease({
       ...base,
       sections: SECTIONS.fr,
-      references: { prefix: '!', url: (number) => `https://gitlab.test/acme/repo/-/merge_requests/${number}` },
+      references: {
+        prefix: '!' as const,
+        url: (number: number) => `https://gitlab.test/acme/repo/-/merge_requests/${number}`,
+      },
       fragments: [
         { file: 'a.md', text: '### Corrigé\n- Corrige a\n### Dépendances\n- À la main\n', pr: 12 },
-        { file: 'b.md', text: '### Ajouté\n- Ancien [[!3]]\n\n[!3]: https://gitlab.test/acme/repo/-/merge_requests/3\n', pr: 13 },
+        {
+          file: 'b.md',
+          text: '### Ajouté\n- Ancien [[!3]]\n\n[!3]: https://gitlab.test/acme/repo/-/merge_requests/3\n',
+          pr: 13,
+        },
       ],
       pulls: [{ number: 4, title: 'chore(deps): update x' }],
     });
@@ -287,11 +378,30 @@ describe('insertSection', () => {
   });
 
   it('appends to a changelog without releases', () => {
-    assert.equal(insertSection(header, '## 1.0.0 - 2026-01-01\n\n### Added\n\n- First', '1.0.0'), `${header}\n## 1.0.0 - 2026-01-01\n\n### Added\n\n- First\n`);
+    assert.equal(
+      insertSection(header, '## 1.0.0 - 2026-01-01\n\n### Added\n\n- First', '1.0.0'),
+      `${header}\n## 1.0.0 - 2026-01-01\n\n### Added\n\n- First\n`,
+    );
   });
 
   it('refuses a version that already exists', () => {
-    assert.throws(() => insertSection(`${header}\n## 1.0.0 - 2026-01-01\n`, '## 1.0.0 - x', '1.0.0'), /already has a section for 1.0.0/);
-    assert.doesNotThrow(() => insertSection(`${header}\n## 1.0.0 - 2026-01-01\n`, '## 1.0 - x', '1.0'));
+    assert.throws(
+      () => insertSection(`${header}\n## 1.0.0 - 2026-01-01\n`, '## 1.0.0 - x', '1.0.0'),
+      /already has a section for 1.0.0/,
+    );
+    assert.doesNotThrow(() =>
+      insertSection(`${header}\n## 1.0.0 - 2026-01-01\n`, '## 1.0 - x', '1.0'),
+    );
+  });
+});
+
+describe('isFragmentPath', () => {
+  it('accepts Markdown files directly in .changelog/ only', () => {
+    assert.isTrue(isFragmentPath('.changelog/ssh-sync.md'));
+    assert.isFalse(isFragmentPath('.changelog/.gitkeep'));
+    assert.isFalse(isFragmentPath('.changelog/.hidden.md'));
+    assert.isFalse(isFragmentPath('.changelog/sub/a.md'));
+    assert.isFalse(isFragmentPath('.changelog/a.txt'));
+    assert.isFalse(isFragmentPath('docs/a.md'));
   });
 });
