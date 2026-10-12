@@ -323,7 +323,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.ar
     cwd: process.cwd(),
     env: process.env,
     fetch: globalThis.fetch,
-    git: (args) => execFileSync('git', args, { encoding: 'utf8' }),
+    // Pipe stderr: `git describe` without a tag must not print `fatal:` in
+    // the job log. A failed command keeps the stderr in its error message.
+    git: (args) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }),
     log: (message) => console.log(message),
     error: (message) => console.error(message),
   });
