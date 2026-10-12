@@ -133,6 +133,35 @@ describe('check', () => {
       assert.equal(io.requests.length, 0);
     });
 
+    it('skips the requirement for renovate[bot] by default', async () => {
+      io = setup();
+      writeEvent(io, { number: 7, labels: [], user: { login: 'renovate[bot]' } });
+      assert.equal(await main(['check', '--require-paths', 'packages/**'], io), 0);
+      assert.equal(io.logs[1], 'Author "renovate[bot]" is in skip-authors: no fragment required.');
+      assert.equal(io.requests.length, 0);
+    });
+
+    it('skips the requirement for the authors in skip-authors', async () => {
+      io = setup();
+      writeEvent(io, { number: 7, labels: [], user: { login: 'bot-b' } });
+      assert.equal(await main(['check', '--require-paths', 'packages/**', '--skip-authors', 'bot-a,\nbot-b'], io), 0);
+      assert.equal(io.requests.length, 0);
+    });
+
+    it('requires a fragment from renovate[bot] when skip-authors is empty', async () => {
+      io = setup({ routes: files([{ filename: 'packages/a.ts', status: 'modified' }]) });
+      writeEvent(io, { number: 7, labels: [], user: { login: 'renovate[bot]' } });
+      assert.equal(await main(['check', '--require-paths', 'packages/**', '--skip-authors', ''], io), 1);
+      assert.match(io.errors[0], /adds no fragment/);
+    });
+
+    it('still validates the fragments of skip-authors', async () => {
+      io = setup({ fragments: { 'deps.md': '## Oops\n' } });
+      writeEvent(io, { number: 7, labels: [], user: { login: 'renovate[bot]' } });
+      assert.equal(await main(['check', '--require-paths', 'packages/**'], io), 1);
+      assert.match(io.errors[0], /Heading "## Oops"/);
+    });
+
     it('reads every page of files and sends the token', async () => {
       const page1 = Array.from({ length: 100 }, (_, index) => ({ filename: `docs/${index}.md`, status: 'added' }));
       io = setup({
@@ -215,7 +244,7 @@ describe('release', () => {
     const io = setup();
     io.env.GITHUB_OUTPUT = join(io.cwd, 'output.txt');
     assert.equal(await main(['release', '--version', '0.2.0'], io), 0);
-    assert.equal(io.logs[0], 'No fragment in .changelog/: CHANGELOG.md is unchanged.');
+    assert.equal(io.logs.at(-1), 'No fragment in .changelog/ and no pull request from skip-authors: CHANGELOG.md is unchanged.');
     assert.match(readFileSync(io.env.GITHUB_OUTPUT, 'utf8'), /^changed<<.*\nfalse\n/);
   });
 
@@ -232,5 +261,65 @@ describe('release', () => {
     assert.equal(await main(['release', '--version', '0.2.0'], io), 1);
     assert.match(io.errors[0], /CHANGELOG\.md not found/);
     assert.equal(existsSync(join(io.cwd, '.changelog/a.md')), true);
+  });
+
+  describe('with pull requests from skip-authors', () => {
+    const pull = (number, login, extra = {}) => [{ number, title: `chore(deps): update ${number}`, merged_at: '2026-10-01', user: { login }, labels: [], ...extra }];
+
+    it('adds the merged pull requests since the previous tag under Dependencies', async () => {
+      const io = setup({
+        fragments: { 'a.md': '### Added\n- Add a\n' },
+        commits: {
+          '.changelog/a.md': 's5 500',
+          HEAD: '1.0.0\n',
+          '1.0.0..HEAD': 's7\ns6\ns5\ns4\ns3\ns2\ns1\ns0\n',
+        },
+        routes: {
+          '/repos/acme/repo/commits/s0/pulls': pull(10, 'renovate[bot]'),
+          '/repos/acme/repo/commits/s1/pulls': pull(10, 'renovate[bot]'),
+          '/repos/acme/repo/commits/s2/pulls': pull(11, 'renovate[bot]', { labels: [{ name: 'no-changelog' }] }),
+          '/repos/acme/repo/commits/s3/pulls': pull(12, 'someone'),
+          '/repos/acme/repo/commits/s4/pulls': [{ ...pull(13, 'renovate[bot]')[0], merged_at: null }],
+          '/repos/acme/repo/commits/s5/pulls': pull(14, 'renovate[bot]'),
+          '/repos/acme/repo/commits/s6/pulls': [],
+          '/repos/acme/repo/commits/s7/pulls': pull(15, 'renovate[bot]'),
+        },
+      });
+      assert.equal(await main(['release', '--version', '1.1.0', '--date', '2026-10-12'], io), 0);
+      assert.match(
+        readFileSync(join(io.cwd, 'CHANGELOG.md'), 'utf8'),
+        /## 1\.1\.0 - 2026-10-12\n\n### Added\n\n- Add a \[\[#14\]\]\n\n### Dependencies\n\n- Update 10 \[\[#10\]\]\n- Update 15 \[\[#15\]\]\n\n\[#10\]: https:\/\/github\.com\/acme\/repo\/pull\/10\n\[#14\]: .*\/pull\/14\n\[#15\]: .*\/pull\/15\n\n## 0\.1\.0/,
+      );
+      assert.deepEqual(io.errors, []);
+    });
+
+    it('sets changed with pull requests alone and reports API errors', async () => {
+      const io = setup({
+        commits: { HEAD: '1.0.0', '1.0.0..HEAD': 'bad\ngood\n' },
+        routes: { '/repos/acme/repo/commits/good/pulls': pull(3, 'bot-b', { labels: [{ name: 'internal' }] }) },
+      });
+      io.env.GITHUB_OUTPUT = join(io.cwd, 'output.txt');
+      assert.equal(await main(['release', '--version', '1.1.0', '--skip-authors', 'bot-a, bot-b', '--skip-label', 'skip'], io), 0);
+      assert.match(readFileSync(join(io.cwd, 'CHANGELOG.md'), 'utf8'), /### Dependencies\n\n- Update 3 \[\[#3\]\]\n/);
+      assert.match(readFileSync(io.env.GITHUB_OUTPUT, 'utf8'), /^changed<<.*\ntrue\n/);
+      assert.match(io.errors[0], /^Cannot find the pull request of bad: GitHub API .* answered 404/);
+    });
+
+    it('adds nothing without a previous tag', async () => {
+      const io = setup();
+      io.git = (args) => {
+        if (args[0] === 'describe') throw new Error('fatal: No names found');
+        return '';
+      };
+      assert.equal(await main(['release', '--version', '1.0.0'], io), 0);
+      assert.equal(io.logs[0], 'No previous tag: no pull request from skip-authors to add.');
+      assert.equal(io.requests.length, 0);
+    });
+
+    it('adds nothing when skip-authors is empty', async () => {
+      const io = setup({ commits: { HEAD: '1.0.0', '1.0.0..HEAD': 's1\n' } });
+      assert.equal(await main(['release', '--version', '1.1.0', '--skip-authors', ''], io), 0);
+      assert.equal(io.requests.length, 0);
+    });
   });
 });

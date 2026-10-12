@@ -80,13 +80,26 @@ export function addReference(entries, pr) {
 }
 
 /**
- * Build the release section from parsed fragments.
- * @param {{ version: string, date: string, repositoryUrl: string, fragments: { file: string, text: string, pr?: number | null }[] }} options
- *   Fragments in the order their entries should appear.
- * @returns {{ section: string | null, body: string, used: string[], errors: { file: string, line: number, message: string }[] }}
- *   `section` is null when no fragment has entries. `used` lists the fragments that went into it.
+ * Turn a pull request title into a changelog entry: remove the conventional
+ * commit prefix (`chore(deps): `) and upper-case the first letter.
+ * @param {string} title
  */
-export function buildRelease({ version, date, repositoryUrl, fragments }) {
+export function titleToEntry(title) {
+  const text = title.trim().replace(/^[a-z]+(\([^)]*\))?!?:\s*/i, '');
+  return `- ${text.charAt(0).toUpperCase()}${text.slice(1)}`;
+}
+
+/**
+ * Build the release section from parsed fragments and pull requests without
+ * fragment (e.g. dependency updates from a bot).
+ * @param {{ version: string, date: string, repositoryUrl: string, fragments: { file: string, text: string, pr?: number | null }[], pulls?: { number: number, title: string }[] }} options
+ *   Fragments in the order their entries should appear. Each pull request
+ *   becomes a `Dependencies` entry, after the fragment entries, unless a
+ *   fragment came from the same pull request.
+ * @returns {{ section: string | null, body: string, used: string[], errors: { file: string, line: number, message: string }[] }}
+ *   `section` is null when there is no entry. `used` lists the fragments that went into it.
+ */
+export function buildRelease({ version, date, repositoryUrl, fragments, pulls = [] }) {
   const merged = new Map(SECTIONS.map((title) => [title, []]));
   const prs = new Set();
   const links = [];
@@ -111,7 +124,14 @@ export function buildRelease({ version, date, repositoryUrl, fragments }) {
     links.push(...parsed.links);
   }
 
-  if (errors.length > 0 || used.length === 0) {
+  const credited = new Set(fragments.map((fragment) => fragment.pr).filter(Boolean));
+  for (const pull of pulls) {
+    if (credited.has(pull.number)) continue;
+    merged.get('Dependencies').push(`${titleToEntry(pull.title)} [[#${pull.number}]]`);
+    prs.add(pull.number);
+  }
+
+  if (errors.length > 0 || [...merged.values()].every((entries) => entries.length === 0)) {
     return { section: null, body: '', used: [], errors };
   }
 

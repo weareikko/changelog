@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { addReference, buildRelease, insertSection, parseFragment } from './changelog.mjs';
+import { addReference, buildRelease, insertSection, parseFragment, titleToEntry } from './changelog.mjs';
 
 describe('parseFragment', () => {
   it('groups entries and link definitions by section', () => {
@@ -75,6 +75,15 @@ describe('addReference', () => {
   });
 });
 
+describe('titleToEntry', () => {
+  it('removes a conventional commit prefix and upper-cases the first letter', () => {
+    assert.equal(titleToEntry('chore(deps): update dependency vitest to v4'), '- Update dependency vitest to v4');
+    assert.equal(titleToEntry('fix!: drop node 18'), '- Drop node 18');
+    assert.equal(titleToEntry('Update actions/checkout action to v5 '), '- Update actions/checkout action to v5');
+    assert.equal(titleToEntry('update dependency: x'), '- Update dependency: x');
+  });
+});
+
 describe('buildRelease', () => {
   const base = { version: '1.2.0', date: '2026-10-12', repositoryUrl: 'https://github.com/acme/repo' };
 
@@ -144,6 +153,39 @@ describe('buildRelease', () => {
     assert.equal(result.body, '### Added\n\n- A [[#1]]\n- B [[#1]]\n\n[#1]: https://github.com/acme/repo/pull/1\n[x]: https://x.test');
   });
 
+  it('adds pull requests under Dependencies, after the fragment entries', () => {
+    const result = buildRelease({
+      ...base,
+      fragments: [{ file: 'a.md', text: '### Dependencies\n- Update by hand\n', pr: 9 }],
+      pulls: [
+        { number: 12, title: 'chore(deps): update dependency x to v2' },
+        { number: 9, title: 'chore(deps): already credited by a fragment' },
+        { number: 4, title: 'Update dependency y to v3' },
+      ],
+    });
+    assert.deepEqual(result.used, ['a.md']);
+    assert.equal(
+      result.body,
+      [
+        '### Dependencies',
+        '',
+        '- Update by hand [[#9]]',
+        '- Update dependency x to v2 [[#12]]',
+        '- Update dependency y to v3 [[#4]]',
+        '',
+        '[#4]: https://github.com/acme/repo/pull/4',
+        '[#9]: https://github.com/acme/repo/pull/9',
+        '[#12]: https://github.com/acme/repo/pull/12',
+      ].join('\n'),
+    );
+  });
+
+  it('builds a section from pull requests alone', () => {
+    const result = buildRelease({ ...base, fragments: [], pulls: [{ number: 5, title: 'chore(deps): update x' }] });
+    assert.deepEqual(result.used, []);
+    assert.equal(result.section, '## 1.2.0 - 2026-10-12\n\n### Dependencies\n\n- Update x [[#5]]\n\n[#5]: https://github.com/acme/repo/pull/5');
+  });
+
   it('returns no section when fragments are empty', () => {
     const result = buildRelease({ ...base, fragments: [{ file: 'a.md', text: '\n\n', pr: 1 }] });
     assert.equal(result.section, null);
@@ -157,6 +199,7 @@ describe('buildRelease', () => {
         { file: 'a.md', text: '### Added\n- A\n' },
         { file: 'b.md', text: '## Oops\n' },
       ],
+      pulls: [{ number: 5, title: 'Update x' }],
     });
     assert.equal(result.section, null);
     assert.equal(result.errors.length, 1);

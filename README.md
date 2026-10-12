@@ -55,14 +55,14 @@ jobs:
             packages/**
 ```
 
-`check` validates every fragment and reports errors as annotations with the file and line. With `require-paths`, a pull request that changes a matching file must also add or edit a fragment, unless it has the `no-changelog` label. The `labeled` and `unlabeled` types re-run the check when the label changes.
+`check` validates every fragment and reports errors as annotations with the file and line. With `require-paths`, a pull request that changes a matching file must also add or edit a fragment, unless it has the `no-changelog` label or its author is in `skip-authors` (`renovate[bot]` by default). The `labeled` and `unlabeled` types re-run the check when the label changes.
 
 ### Release
 
 ```yaml
 - uses: actions/checkout@v5
   with:
-    fetch-depth: 0 # the action reads the commit that added each fragment
+    fetch-depth: 0 # the action reads the commit that added each fragment, and the tags
 
 - id: changelog
   uses: weareikko/changelog@1
@@ -79,19 +79,31 @@ jobs:
 
 Pass expressions to `run:` through `env:`, never inline, to avoid shell injection.
 
-`release` validates all fragments first. If one is invalid, it fails and changes nothing. Otherwise it inserts `## <version> - <YYYY-MM-DD>` before the latest release in `CHANGELOG.md` and deletes the fragments it used. It fails if `CHANGELOG.md` already has a section for that version. With no fragment, it changes nothing and sets `changed` to `false`.
+`release` validates all fragments first. If one is invalid, it fails and changes nothing. Otherwise it inserts `## <version> - <YYYY-MM-DD>` before the latest release in `CHANGELOG.md` and deletes the fragments it used. It fails if `CHANGELOG.md` already has a section for that version. With no fragment and no pull request from `skip-authors`, it changes nothing and sets `changed` to `false`.
+
+### Pull requests from bots
+
+A bot such as Renovate does not write fragments. `check` does not require a fragment from the authors in `skip-authors` (`renovate[bot]` by default). The fragments that they add are still validated.
+
+At release time, `release` also lists the pull requests of these authors that were merged since the previous tag (`git describe --tags --abbrev=0`), on the first-parent history of `HEAD`. Each one becomes a `### Dependencies` entry: the pull request title without its conventional commit prefix (`chore(deps): `), with an upper-case first letter, its `[[#N]]` reference and the link definition. These entries come after the `Dependencies` entries of the fragments. The action skips:
+
+- the pull requests with the `skip-label` label (`no-changelog`), e.g. development dependency updates,
+- the pull requests that already added a fragment.
+
+With no previous tag, `release` adds no such entry. Pull requests from `skip-authors` alone are enough for a new section, with `changed` set to `true`.
 
 The action only edits files. Bumping the version, committing, tagging and publishing stay in your workflow, because they differ from one repository to another.
 
 ## Inputs
 
-| Input           | Default               | Description                                                                                         |
-| --------------- | --------------------- | --------------------------------------------------------------------------------------------------- |
-| `command`       | —                     | `check` or `release`.                                                                               |
-| `version`       | —                     | `release`: version heading, written as given (`1.2.0` or `v1.2.0`).                                 |
-| `require-paths` | —                     | `check`: globs, one per line or comma-separated. Matching changes require a fragment.               |
-| `skip-label`    | `no-changelog`        | `check`: label that lifts the fragment requirement.                                                 |
-| `github-token`  | `${{ github.token }}` | Reads pull request files (`check`) and finds the pull request of each fragment (`release`).         |
+| Input           | Default               | Description                                                                                                                                            |
+| --------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `command`       | —                     | `check` or `release`.                                                                                                                                  |
+| `version`       | —                     | `release`: version heading, written as given (`1.2.0` or `v1.2.0`).                                                                                    |
+| `require-paths` | —                     | `check`: globs, one per line or comma-separated. Matching changes require a fragment.                                                                  |
+| `skip-label`    | `no-changelog`        | `check`: label that lifts the fragment requirement. `release`: a pull request from `skip-authors` with this label gets no entry.                       |
+| `skip-authors`  | `renovate[bot]`       | Logins, one per line or comma-separated. `check`: their pull requests need no fragment. `release`: their pull requests become `Dependencies` entries.  |
+| `github-token`  | `${{ github.token }}` | Reads pull request files (`check`), and finds the pull request of each fragment and of each commit since the previous tag (`release`).                 |
 
 ## Outputs
 

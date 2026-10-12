@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Command line entry: `check` validates fragments (and, on pull requests,
-// requires one), `release` folds them into CHANGELOG.md.
+// requires one), `release` folds them into CHANGELOG.md, with the pull
+// requests of `skip-authors` (e.g. Renovate) under Dependencies.
 
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -10,6 +11,8 @@ import { pathToFileURL } from 'node:url';
 import { buildRelease, insertSection, parseFragment } from './changelog.mjs';
 
 const DIRECTORY = '.changelog';
+const SKIP_LABEL = 'no-changelog';
+const SKIP_AUTHORS = 'renovate[bot]';
 
 /**
  * @typedef {object} Io
@@ -97,7 +100,8 @@ async function listPullRequestFiles(io, pr) {
 
 /**
  * Validate every fragment. On a pull request, also fail when files matching
- * `require-paths` change without a new or edited fragment.
+ * `require-paths` change without a new or edited fragment, unless the pull
+ * request has the skip label or its author is in `skip-authors`.
  * @param {Io} io
  * @param {Record<string, string>} options
  */
@@ -113,9 +117,15 @@ export async function check(io, options) {
   const pullRequest = event.pull_request;
   if (patterns.length === 0 || !pullRequest) return 0;
 
-  const skipLabel = options['skip-label'] || 'no-changelog';
+  const skipLabel = options['skip-label'] || SKIP_LABEL;
   if (pullRequest.labels?.some((label) => label.name === skipLabel)) {
     io.log(`Label "${skipLabel}" is set: no fragment required.`);
+    return 0;
+  }
+
+  const author = pullRequest.user?.login;
+  if (splitList(options['skip-authors'] ?? SKIP_AUTHORS).includes(author)) {
+    io.log(`Author "${author}" is in skip-authors: no fragment required.`);
     return 0;
   }
 
@@ -145,6 +155,16 @@ export async function check(io, options) {
 }
 
 /**
+ * Find the merged pull request of a commit.
+ * @param {Io} io
+ * @param {string} sha
+ */
+async function findMergedPull(io, sha) {
+  const pulls = await api(io, `/repos/${io.env.GITHUB_REPOSITORY}/commits/${sha}/pulls`);
+  return pulls.find((pull) => pull.merged_at) ?? null;
+}
+
+/**
  * Find the merged pull request that added a fragment.
  * @param {Io} io
  * @param {string} file
@@ -155,13 +175,57 @@ async function resolveOrigin(io, file) {
   if (!sha) return { pr: null, time: Number.POSITIVE_INFINITY };
   if (!io.env.GITHUB_REPOSITORY) return { pr: null, time: Number(time) };
   try {
-    const pulls = await api(io, `/repos/${io.env.GITHUB_REPOSITORY}/commits/${sha}/pulls`);
-    const merged = pulls.find((pull) => pull.merged_at);
+    const merged = await findMergedPull(io, sha);
     return { pr: merged ? merged.number : null, time: Number(time) };
   } catch (error) {
     io.error(`Cannot find the pull request of ${file} (${sha}): ${error.message}`);
     return { pr: null, time: Number(time) };
   }
+}
+
+/**
+ * List the pull requests of `authors` merged since the previous tag, oldest
+ * first, without the ones that have the skip label.
+ * @param {Io} io
+ * @param {string[]} authors
+ * @param {string} skipLabel
+ * @returns {Promise<{ number: number, title: string }[]>}
+ */
+async function listAuthorPulls(io, authors, skipLabel) {
+  if (authors.length === 0 || !io.env.GITHUB_REPOSITORY) return [];
+
+  let tag = '';
+  try {
+    tag = io.git(['describe', '--tags', '--abbrev=0', 'HEAD']).trim();
+  } catch {
+    // No tag: this is the first release.
+  }
+  if (!tag) {
+    io.log('No previous tag: no pull request from skip-authors to add.');
+    return [];
+  }
+
+  const shas = io.git(['log', '--first-parent', '--format=%H', `${tag}..HEAD`]).split('\n').filter(Boolean).reverse();
+  const pulls = new Map();
+  for (const sha of shas) {
+    let pull;
+    try {
+      pull = await findMergedPull(io, sha);
+    } catch (error) {
+      io.error(`Cannot find the pull request of ${sha}: ${error.message}`);
+      continue;
+    }
+    if (
+      !pull ||
+      pulls.has(pull.number) ||
+      !authors.includes(pull.user?.login) ||
+      pull.labels?.some((label) => label.name === skipLabel)
+    ) {
+      continue;
+    }
+    pulls.set(pull.number, { number: pull.number, title: pull.title });
+  }
+  return [...pulls.values()];
 }
 
 /**
@@ -177,7 +241,8 @@ function setOutputs(io, values) {
 }
 
 /**
- * Fold the fragments into a new CHANGELOG.md section and delete them.
+ * Fold the fragments, and the pull requests of `skip-authors` merged since the
+ * previous tag, into a new CHANGELOG.md section, and delete the fragments.
  * @param {Io} io
  * @param {Record<string, string>} options
  */
@@ -193,16 +258,21 @@ export async function release(io, options) {
     fragments.push({ file, text, ...(await resolveOrigin(io, file)) });
   }
   fragments.sort((a, b) => a.time - b.time || a.file.localeCompare(b.file));
+  const pulls = await listAuthorPulls(
+    io,
+    splitList(options['skip-authors'] ?? SKIP_AUTHORS),
+    options['skip-label'] || SKIP_LABEL,
+  );
 
   const repositoryUrl = `${io.env.GITHUB_SERVER_URL || 'https://github.com'}/${io.env.GITHUB_REPOSITORY}`;
-  const { section, body, used, errors } = buildRelease({ version, date, repositoryUrl, fragments });
+  const { section, body, used, errors } = buildRelease({ version, date, repositoryUrl, fragments, pulls });
   reportErrors(io, errors);
   if (errors.length > 0) {
     io.error('Invalid fragments: CHANGELOG.md and .changelog/ are unchanged.');
     return 1;
   }
   if (section === null) {
-    io.log(`No fragment in ${DIRECTORY}/: CHANGELOG.md is unchanged.`);
+    io.log(`No fragment in ${DIRECTORY}/ and no pull request from skip-authors: CHANGELOG.md is unchanged.`);
     setOutputs(io, { changed: 'false', body: '' });
     return 0;
   }
@@ -226,7 +296,10 @@ export async function main(argv, io) {
     const { command, options } = parseArgs(argv);
     if (command === 'check') return await check(io, options);
     if (command === 'release') return await release(io, options);
-    io.error('Usage: cli.mjs check [--require-paths <globs>] [--skip-label <label>]\n       cli.mjs release --version <version> [--date <YYYY-MM-DD>]');
+    io.error(
+      'Usage: cli.mjs check [--require-paths <globs>] [--skip-label <label>] [--skip-authors <logins>]\n' +
+        '       cli.mjs release --version <version> [--date <YYYY-MM-DD>] [--skip-label <label>] [--skip-authors <logins>]',
+    );
     return 2;
   } catch (error) {
     io.error(error.message);
