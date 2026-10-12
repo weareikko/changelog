@@ -61,16 +61,21 @@ export function parseFragment(text, file) {
 }
 
 /**
- * Append a ` [[#N]]` reference to each top-level entry that does not already
- * mention the pull request.
+ * Append a ` [[#N]]` reference to each top-level entry that has no `[#N]`
+ * reference yet and does not mention the pull request.
  * @param {string[]} entries
  * @param {number} pr
+ * @returns {{ entries: string[], added: boolean }}
  */
 export function addReference(entries, pr) {
-  const mention = new RegExp(`#${pr}(?!\\d)`);
-  return entries.map((entry) =>
-    entry.startsWith('- ') && !mention.test(entry) ? `${entry} [[#${pr}]]` : entry,
-  );
+  const mention = new RegExp(`\\[#\\d+\\]|#${pr}(?!\\d)`);
+  let added = false;
+  const result = entries.map((entry) => {
+    if (!entry.startsWith('- ') || mention.test(entry)) return entry;
+    added = true;
+    return `${entry} [[#${pr}]]`;
+  });
+  return { entries: result, added };
 }
 
 /**
@@ -94,9 +99,14 @@ export function buildRelease({ version, date, repositoryUrl, fragments }) {
 
     used.push(fragment.file);
     for (const [title, entries] of parsed.sections) {
-      merged.get(title).push(...(fragment.pr ? addReference(entries, fragment.pr) : entries));
+      if (!fragment.pr) {
+        merged.get(title).push(...entries);
+        continue;
+      }
+      const referenced = addReference(entries, fragment.pr);
+      merged.get(title).push(...referenced.entries);
+      if (referenced.added) prs.add(fragment.pr);
     }
-    if (fragment.pr) prs.add(fragment.pr);
     links.push(...parsed.links);
   }
 

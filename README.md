@@ -24,7 +24,7 @@ A fragment contains one or more `###` sections, each followed by its entries, an
 
 Allowed sections, in the order a release renders them: `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`, `Dependencies`.
 
-Do not write the pull request number: the number is not known when you write the fragment. At release time, the action finds the merged pull request that added each fragment and appends `[[#N]]` to each top-level entry, plus the `[#N]: <url>` link definition. An entry that already mentions `#N` is left as it is. Other link definitions (`[abc1234]: https://…`) are allowed anywhere in a fragment; they move to the end of the release section.
+Do not write the pull request number: the number is not known when you write the fragment. At release time, the action finds the merged pull request that added each fragment and appends `[[#N]]` to each top-level entry, plus the `[#N]: <url>` link definition. An entry that already has a `[#N]` reference, or mentions the pull request, is left as it is: moving old entries into a fragment keeps their original references. Other link definitions (`[abc1234]: https://…`) are allowed anywhere in a fragment; they move to the end of the release section.
 
 Keep a `.changelog/.gitkeep` file so the directory exists when it is empty. The action never reads or deletes it. An empty fragment is ignored and kept for the next release.
 

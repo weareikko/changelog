@@ -56,11 +56,18 @@ describe('parseFragment', () => {
 
 describe('addReference', () => {
   it('appends the reference to top-level entries only', () => {
-    assert.deepEqual(addReference(['- One', '  continued', '  - nested'], 12), ['- One [[#12]]', '  continued', '  - nested']);
+    assert.deepEqual(addReference(['- One', '  continued', '  - nested'], 12), {
+      entries: ['- One [[#12]]', '  continued', '  - nested'],
+      added: true,
+    });
   });
 
-  it('keeps entries that already mention the pull request', () => {
-    assert.deepEqual(addReference(['- One (#12)', '- Two [[#123]]'], 12), ['- One (#12)', '- Two [[#123]] [[#12]]']);
+  it('keeps entries that mention the pull request or already have a reference', () => {
+    assert.deepEqual(addReference(['- One (#12)', '- Two [[#123], [abc1234]]', '- Fix #120 crash'], 12), {
+      entries: ['- One (#12)', '- Two [[#123], [abc1234]]', '- Fix #120 crash [[#12]]'],
+      added: true,
+    });
+    assert.deepEqual(addReference(['- Two [[#123]]'], 12), { entries: ['- Two [[#123]]'], added: false });
   });
 });
 
@@ -98,6 +105,14 @@ describe('buildRelease', () => {
       ].join('\n'),
     );
     assert.equal(result.body, result.section.split('\n').slice(2).join('\n'));
+  });
+
+  it('adds no link definition when every entry already has a reference', () => {
+    const result = buildRelease({
+      ...base,
+      fragments: [{ file: 'a.md', text: '### Added\n- A [[#127]]\n\n[#127]: https://github.com/acme/repo/pull/127\n', pr: 130 }],
+    });
+    assert.equal(result.body, '### Added\n\n- A [[#127]]\n\n[#127]: https://github.com/acme/repo/pull/127');
   });
 
   it('deduplicates link definitions', () => {
