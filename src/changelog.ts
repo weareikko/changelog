@@ -6,7 +6,8 @@ export const FRAGMENTS_DIRECTORY = '.changelog';
 
 /**
  * Keep a Changelog sections by locale, in the order a release renders them.
- * The last one gets the pull requests without fragment (dependency updates).
+ * The first one (`Added`) holds new features. The last one gets the pull
+ * requests without fragment (dependency updates).
  * The French names are the ones of the `release` job of studiometa/gitlab-ci.
  */
 export const SECTIONS = {
@@ -49,9 +50,13 @@ export interface ReleasePull {
   title: string;
 }
 
+/**
+ * The kind of change a release holds, for `--version auto`: a breaking entry,
+ * else a new feature (an `Added` entry), else a fix.
+ */
+export type ChangeLevel = 'breaking' | 'feature' | 'fix';
+
 export interface BuildReleaseOptions {
-  version: string;
-  date: string;
   sections: readonly string[];
   references: References;
   /** Fragments in the order their entries should appear. */
@@ -65,16 +70,43 @@ export interface BuildReleaseOptions {
 }
 
 export interface BuiltRelease {
-  /** The `## <version> - <date>` section, or null when there is no entry. */
-  section: string | null;
-  /** The section without its heading, e.g. for release notes. */
-  body: string;
+  /**
+   * The section without its `## <version> - <date>` heading (see
+   * {@link formatSection}), or null when there is no entry.
+   */
+  body: string | null;
+  /** The kind of change of the entries, or null when there is no entry. */
+  change: ChangeLevel | null;
   /** The fragments that went into the section. */
   used: string[];
   errors: FileIssue[];
 }
 
 const LINK_DEFINITION = /^\[[^\]]+\]:\s+\S/;
+
+/**
+ * A breaking entry starts with `Breaking: `, `**Breaking:** `, `**Breaking**: `
+ * (in any case) or `⚠️ `, optionally after a package prefix (`**CLI**: `,
+ * `**@scope/pkg:** `).
+ */
+const BREAKING_ENTRY =
+  /^- (?:\*\*[^*]+(?:\*\*:|:\*\*) )?(?:breaking: |\*\*breaking(?::\*\*|\*\*:) |⚠\uFE0F? )/iu;
+
+/** True for a top-level entry marked as a breaking change. */
+export function isBreakingEntry(entry: string): boolean {
+  return BREAKING_ENTRY.test(entry);
+}
+
+/**
+ * The kind of change of a release: `breaking` when an entry is marked as
+ * breaking, `feature` when the first section (`Added`) has an entry, else
+ * `fix`.
+ */
+export function changeLevel(sections: Map<string, string[]>, added: string): ChangeLevel {
+  const entries = [...sections.values()].flat();
+  if (entries.some(isBreakingEntry)) return 'breaking';
+  return (sections.get(added)?.length ?? 0) > 0 ? 'feature' : 'fix';
+}
 
 /**
  * Parse one fragment. A fragment holds one or more `### <Section>` headings,
@@ -190,12 +222,10 @@ function sortDefinitions(definitions: string[]): string[] {
 }
 
 /**
- * Build the release section from fragments and pull requests without
- * fragment. `section` is null when there is no entry or a fragment is invalid.
+ * Build the release body from fragments and pull requests without fragment.
+ * `body` is null when there is no entry or a fragment is invalid.
  */
 export function buildRelease({
-  version,
-  date,
   sections,
   references,
   fragments,
@@ -235,7 +265,7 @@ export function buildRelease({
   }
 
   if (errors.length > 0 || [...merged.values()].every((entries) => entries.length === 0)) {
-    return { section: null, body: '', used: [], errors };
+    return { body: null, change: null, used: [], errors };
   }
 
   const blocks: string[] = [];
@@ -249,8 +279,17 @@ export function buildRelease({
   ]);
   if (definitions.length > 0) blocks.push(definitions.join('\n'));
 
-  const body = blocks.join('\n\n');
-  return { section: `## ${version} - ${date}\n\n${body}`, body, used, errors };
+  return {
+    body: blocks.join('\n\n'),
+    change: changeLevel(merged, sections[0]),
+    used,
+    errors,
+  };
+}
+
+/** The `## <version> - <date>` section of a release body. */
+export function formatSection(version: string, date: string, body: string): string {
+  return `## ${version} - ${date}\n\n${body}`;
 }
 
 /**

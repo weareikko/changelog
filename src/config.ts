@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { LOCALES, SECTIONS, type Locale } from './changelog.js';
 import { ConfigError } from './errors.js';
+import { AUTO_VERSION } from './version.js';
 
 export const COMMANDS = ['check', 'release'] as const;
 export type Command = (typeof COMMANDS)[number];
@@ -83,7 +84,10 @@ export interface Config {
   requirePaths: string[];
   skipLabel: string;
   skipAuthors: string[];
+  /** The version heading, or `auto` to compute it from the entries. */
   version: string;
+  /** For `--version auto`: the version to bump. Empty: the latest tag. */
+  current: string;
   date: string;
   dotenv: string;
   notesFile: string;
@@ -101,6 +105,7 @@ const OPTIONS = {
   locale: { type: 'string' },
   platform: { type: 'string' },
   version: { type: 'string' },
+  current: { type: 'string' },
   date: { type: 'string' },
   dotenv: { type: 'string' },
   'notes-file': { type: 'string' },
@@ -120,6 +125,7 @@ const COMMAND_ONLY: Partial<Record<OptionName, Command>> = {
   'require-paths': 'check',
   codequality: 'check',
   version: 'release',
+  current: 'release',
   date: 'release',
   dotenv: 'release',
   'notes-file': 'release',
@@ -322,6 +328,7 @@ export function resolveConfig(
     skipAuthors:
       skipAuthors === undefined ? DEFAULT_SKIP_AUTHORS[platform] : splitList(skipAuthors),
     version: values.version ?? '',
+    current: first(values.current, env.CHANGELOG_CURRENT_VERSION) ?? '',
     date: values.date || new Date().toISOString().slice(0, 10),
     dotenv: values.dotenv ?? '',
     notesFile: values['notes-file'] ?? '',
@@ -332,8 +339,11 @@ export function resolveConfig(
 
   if (command === 'release' && !config.version) {
     throw new ConfigError('Missing --version.', {
-      hint: 'Pass the version heading, e.g. "changelog release --version 1.2.0".',
+      hint: 'Pass the version heading, e.g. "changelog release --version 1.2.0", or "--version auto".',
     });
+  }
+  if (values.current && config.version !== AUTO_VERSION) {
+    throw new ConfigError('--current only applies to "--version auto".');
   }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(config.date)) {
     throw new ConfigError(`Invalid --date "${config.date}".`, { hint: 'Use YYYY-MM-DD.' });

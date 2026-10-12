@@ -4,20 +4,28 @@ name: Release
 # and the publish jobs in publish.yml, and do not call them from another workflow.
 
 on:
+  # Each merge into main releases what its fragments describe. The `Release`
+  # commit that this workflow pushes with GITHUB_TOKEN starts no new run.
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       bump:
-        description: 'Version bump (the pre* bumps and prerelease create a prerelease on the `next` npm dist-tag)'
+        description: 'Version bump: `auto` follows the fragments; the pre* bumps and prerelease create a prerelease on the `next` npm dist-tag'
         type: choice
-        options: [patch, minor, major, prepatch, preminor, premajor, prerelease]
-        default: patch
+        options: [auto, patch, minor, major, prepatch, preminor, premajor, prerelease]
+        default: auto
       preid:
         description: 'Prerelease identifier, used by the pre* bumps and prerelease only'
         type: choice
         options: [alpha, beta, rc]
         default: alpha
 
-concurrency: release
+# One release at a time. GitHub keeps only the newest pending run: it
+# releases everything that main has at that point.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -31,38 +39,84 @@ jobs:
       contents: write
       pull-requests: read
     outputs:
+      released: ${{ steps.version.outputs.released }}
       version: ${{ steps.version.outputs.version }}
       prerelease: ${{ steps.version.outputs.prerelease }}
       dist-tag: ${{ steps.version.outputs.dist-tag }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
-          # The changelog action reads the commit that added each fragment, and the tags.
+          # The changelog CLI reads the commit that added each fragment, and the tags.
           fetch-depth: 0
 
+      # Only release the commit that this run checked: when main has moved on,
+      # the run of the newer commit releases.
+      - name: Check that main has not moved on
+        id: head
+        run: |
+          git fetch --quiet origin main
+          if [[ "$(git rev-parse origin/main)" != "$GITHUB_SHA" ]]; then
+            echo "::notice::main has moved on since this run started: the newer run releases."
+            echo "latest=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "latest=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Setup Node.js
+        if: steps.head.outputs.latest == 'true'
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: '24'
           cache: npm
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Check
-        run: npm run check
-
-      # A prerelease version (with a `-`, e.g. 1.2.0-beta.0) goes to the `next`
-      # dist-tag on npm, any other version to `latest`.
-      - name: Bump version
-        id: version
-        env:
-          BUMP: ${{ inputs.bump }}
-          PREID: ${{ inputs.preid }}
+      # The CLI of this commit releases itself: the action runs the published
+      # package, and this version is not published yet.
+      - name: Install, check and build
+        if: steps.head.outputs.latest == 'true'
         run: |
-          echo "previous=$(node -p 'require("./package.json").version')" >> "$GITHUB_OUTPUT"
-          npm version "$BUMP" --preid "$PREID" --no-git-tag-version
-          VERSION="$(node -p 'require("./package.json").version')"
+          npm ci
+          npm run check
+          npm run build
+
+      # `auto` gets the next version from the fragments (see "Automatic
+      # version" in the README), and releases nothing without an entry. An
+      # explicit bump sets the version first. Promoting a prerelease
+      # (1.1.0-rc.0 to 1.1.0) can have no new fragment: the prerelease already
+      # folded them. A prerelease (with a `-`, e.g. 1.2.0-beta.0) goes to the
+      # `next` dist-tag on npm, any other version to `latest`.
+      - name: Fold changelog fragments and bump version
+        id: version
+        if: steps.head.outputs.latest == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          BUMP: ${{ inputs.bump || 'auto' }}
+          PREID: ${{ inputs.preid || 'alpha' }}
+        run: |
+          RELEASE_ENV="$RUNNER_TEMP/release.env"
+          changelog() { GITHUB_OUTPUT='' node bin/changelog.js release --dotenv "$RELEASE_ENV" "$@"; }
+          changed() { [[ "$(sed -n 's/^CHANGELOG_CHANGED=//p' "$RELEASE_ENV")" == true ]]; }
+          PREVIOUS="$(node -p 'require("./package.json").version')"
+          if [[ $BUMP == auto ]]; then
+            changelog --version auto --current "$PREVIOUS"
+            if ! changed; then
+              echo "::notice::No fragment and no pull request from skip-authors: nothing to release."
+              echo "released=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            VERSION="$(sed -n 's/^CHANGELOG_VERSION=//p' "$RELEASE_ENV")"
+            npm version "$VERSION" --no-git-tag-version
+          else
+            npm version "$BUMP" --preid "$PREID" --no-git-tag-version
+            VERSION="$(node -p 'require("./package.json").version')"
+            changelog --version "$VERSION"
+            if ! changed; then
+              if [[ $PREVIOUS != *-* || $VERSION == *-* ]]; then
+                echo "::error::No fragment in .changelog/: nothing to release."
+                exit 1
+              fi
+              echo "::notice::No fragment in .changelog/: stable release of $PREVIOUS."
+            fi
+          fi
           if [[ $VERSION == *-* ]]; then
             PRERELEASE=true
             DIST_TAG=next
@@ -71,41 +125,16 @@ jobs:
             DIST_TAG=latest
           fi
           {
+            echo "released=true"
             echo "version=$VERSION"
             echo "prerelease=$PRERELEASE"
             echo "dist-tag=$DIST_TAG"
           } >> "$GITHUB_OUTPUT"
 
-      # The CLI of this commit releases itself: the action runs the published
-      # package, and this version is not published yet. The CLI writes the
-      # `changed` output of this step to GITHUB_OUTPUT.
-      - name: Fold changelog fragments
-        id: changelog
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          npm run build
-          node bin/changelog.js release --version "$VERSION"
-
-      # Promoting a prerelease (1.1.0-rc.0 to 1.1.0) can have no new fragment:
-      # the prerelease already folded them.
-      - name: Fail when there is nothing to release
-        if: steps.changelog.outputs.changed != 'true'
-        env:
-          PREVIOUS: ${{ steps.version.outputs.previous }}
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          if [[ $PREVIOUS == *-* && $VERSION != *-* ]]; then
-            echo "::notice::No fragment in .changelog/: stable release of $PREVIOUS."
-            exit 0
-          fi
-          echo "::error::No fragment in .changelog/: nothing to release."
-          exit 1
-
       # Tags have no `v` prefix. The major tag (`1`) that `uses:
       # weareikko/changelog@1` reads moves to stable releases only.
       - name: Commit, tag and push
+        if: steps.version.outputs.released == 'true'
         env:
           VERSION: ${{ steps.version.outputs.version }}
           PRERELEASE: ${{ steps.version.outputs.prerelease }}
@@ -129,6 +158,7 @@ jobs:
   publish:
     name: Publish to npm
     needs: release
+    if: needs.release.outputs.released == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write

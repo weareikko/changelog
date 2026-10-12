@@ -3,7 +3,11 @@ import { builtinModules } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
-const external = [...builtinModules, ...builtinModules.map((moduleName) => `node:${moduleName}`)];
+const external = [
+  ...builtinModules,
+  ...builtinModules.map((moduleName) => `node:${moduleName}`),
+  'semver',
+];
 
 const pkg = JSON.parse(
   readFileSync(fileURLToPath(new URL('./package.json', import.meta.url)), 'utf8'),

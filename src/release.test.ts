@@ -85,7 +85,9 @@ describe('release', () => {
     expect(read('.changelog/empty.md')).toBe('\n');
     expect(read('release.env')).toBe('CHANGELOG_CHANGED=false\nCHANGELOG_VERSION=1.1.0\n');
     expect(read('notes.md')).toBe('');
-    expect(read('github-output')).toMatch(/^changed<<(\S+)\nfalse\n\1\nbody<<(\S+)\n\n\2\n$/);
+    expect(read('github-output')).toMatch(
+      /^changed<<(\S+)\nfalse\n\1\nversion<<(\S+)\n1\.1\.0\n\2\nbody<<(\S+)\n\n\3\n$/,
+    );
   });
 
   it('folds fragments with pull request references, oldest first, and deletes them', async () => {
@@ -100,7 +102,7 @@ describe('release', () => {
         [added('.changelog/a.md')]: 'sha-a 200\n',
         [added('.changelog/b.md')]: 'sha-b 100\n',
         [added('.changelog/local.md')]: '',
-        'describe --tags --abbrev=0 HEAD': new Error('No names found'),
+        'tag --merged HEAD': '',
       }),
       fetch: routeFetch({
         '/repos/acme/repo/commits/sha-a/pulls': [
@@ -205,7 +207,7 @@ describe('release', () => {
         fetch: fetchImpl,
         git: tableGit({
           [added('.changelog/feature.md')]: 'sha-frag 100\n',
-          'describe --tags --abbrev=0 HEAD': 'v1.0.0\n',
+          'tag --merged HEAD': '1\nv0.9.0\nv1.0.0\n',
           'log --first-parent --format=%H v1.0.0..HEAD': 'c6\nc5\nc4\nc3\nc2\nc1\n',
         }),
       },
@@ -230,6 +232,97 @@ describe('release', () => {
       ].join('\n'),
     );
     expect(read('out/release.env')).toBe('CHANGELOG_CHANGED=true\nCHANGELOG_VERSION=v2.0.0\n');
+  });
+
+  it('computes the next version with --version auto and --current', async () => {
+    const { runtime, read, code } = run(
+      ['--version', 'auto', '--current', '1.1.0', '--dotenv', 'release.env'],
+      {
+        files: { '.changelog/a.md': '### Added\n- A\n### Fixed\n- B\n' },
+        git: tableGit({ [added('.changelog/a.md')]: '' }),
+      },
+    );
+    expect(await code).toBe(0);
+    expect(runtime.out[0]).toBe('Version 1.2.0: feature change since 1.1.0.');
+    expect(read('CHANGELOG.md')).toContain('## 1.2.0 - 2026-10-12\n\n### Added\n\n- A\n');
+    expect(read('release.env')).toBe('CHANGELOG_CHANGED=true\nCHANGELOG_VERSION=1.2.0\n');
+    expect(read('github-output')).toMatch(/\nversion<<(\S+)\n1\.2\.0\n\1\n/);
+  });
+
+  it('bumps from the latest version tag, from CHANGELOG_CURRENT_VERSION, or from 0.0.0', async () => {
+    const fragment = { '.changelog/a.md': '### Changed\n- **CLI**: Breaking: rename\n' };
+    const tagged = run(['--version', 'auto'], {
+      files: fragment,
+      git: tableGit({ [added('.changelog/a.md')]: '', 'tag --merged HEAD': '1\n1.4.0\n' }),
+    });
+    expect(await tagged.code).toBe(0);
+    expect(tagged.read('CHANGELOG.md')).toContain('## 2.0.0 - 2026-10-12');
+
+    const fromEnv = run(['--version', 'auto'], {
+      env: { CHANGELOG_CURRENT_VERSION: '0.4.7' },
+      files: fragment,
+      git: tableGit({ [added('.changelog/a.md')]: '' }),
+    });
+    expect(await fromEnv.code).toBe(0);
+    expect(fromEnv.read('CHANGELOG.md')).toContain('## 0.5.0 - 2026-10-12');
+
+    const untagged = run(['--version', 'auto'], {
+      files: { '.changelog/a.md': '### Fixed\n- Fix\n' },
+      git: tableGit({ [added('.changelog/a.md')]: '', 'tag --merged HEAD': '' }),
+    });
+    expect(await untagged.code).toBe(0);
+    expect(untagged.read('CHANGELOG.md')).toContain('## 0.0.1 - 2026-10-12');
+  });
+
+  it('releases a minor version for a breaking change on 0.x', async () => {
+    const { read, code } = run(['--version', 'auto', '--current', '0.9.9'], {
+      files: {
+        '.changelog/sse.md': '### Removed\n\n- **BREAKING**: Remove the `sse` MCP transport\n',
+      },
+      git: tableGit({ [added('.changelog/sse.md')]: '' }),
+    });
+    expect(await code).toBe(0);
+    expect(read('CHANGELOG.md')).toContain('## 0.10.0 - 2026-10-12\n\n### Removed\n');
+  });
+
+  it('releases a patch for entries from skip-authors alone', async () => {
+    const { read, code } = run(['--version', 'auto', '--current', '1.1.0'], {
+      env: GITHUB,
+      git: tableGit({
+        'tag --merged HEAD': '1\n1.1.0\n',
+        'log --first-parent --format=%H 1.1.0..HEAD': 'c1\n',
+      }),
+      fetch: routeFetch({
+        '/repos/acme/repo/commits/c1/pulls': [
+          {
+            number: 7,
+            title: 'chore(deps): update x',
+            merged_at: '2026-10-12',
+            base: { ref: 'main' },
+            user: { login: 'renovate[bot]' },
+          },
+        ],
+      }),
+    });
+    expect(await code).toBe(0);
+    expect(read('CHANGELOG.md')).toContain(
+      '## 1.1.1 - 2026-10-12\n\n### Dependencies\n\n- Update x [[#7]]',
+    );
+  });
+
+  it('writes an empty version when --version auto has nothing to release', async () => {
+    const { read, code } = run([
+      '--version',
+      'auto',
+      '--dotenv',
+      'release.env',
+      '--skip-authors',
+      '',
+    ]);
+    expect(await code).toBe(0);
+    expect(read('CHANGELOG.md')).toBe(CHANGELOG);
+    expect(read('release.env')).toBe('CHANGELOG_CHANGED=false\nCHANGELOG_VERSION=\n');
+    expect(read('github-output')).toMatch(/\nversion<<(\S+)\n\n\1\n/);
   });
 
   it('folds fragments without references when the API is unavailable', async () => {

@@ -51,8 +51,12 @@
     "prepublishOnly": "npm run check && npm run build && npm pack --dry-run",
     "prepare": "husky"
   },
+  "dependencies": {
+    "semver": "^7.8.5"
+  },
   "devDependencies": {
     "@types/node": "^24.13.6",
+    "@types/semver": "^7.8.0",
     "@typescript/native-preview": "7.0.0-dev.20260707.2",
     "@vitest/coverage-v8": "^4.1.11",
     "husky": "9.1.7",
