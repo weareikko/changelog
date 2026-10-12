@@ -1,16 +1,37 @@
 {
   "name": "@weareikko/changelog",
   "version": "1.0.3",
-  "private": true,
   "type": "module",
-  "description": "GitHub Action to validate .changelog/ fragments on pull requests and fold them into CHANGELOG.md at release time.",
+  "description": "Validate .changelog/ fragments on pull and merge requests and fold them into CHANGELOG.md at release time, on GitHub Actions and GitLab CI.",
+  "keywords": [
+    "changelog",
+    "keep-a-changelog",
+    "fragments",
+    "github-action",
+    "gitlab-ci"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/weareikko/changelog.git"
   },
+  "bin": {
+    "changelog": "cli.mjs"
+  },
+  "exports": {
+    ".": "./changelog.mjs",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "changelog.mjs",
+    "cli.mjs",
+    "platforms.mjs"
+  ],
   "engines": {
     "node": ">=24"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "test": "node --test"

@@ -25,6 +25,10 @@ inputs:
     description: 'Logins, one per line or comma-separated. `check` on a pull request: their pull requests need no fragment. `release`: their pull requests merged since the previous tag become `Dependencies` entries.'
     required: false
     default: 'renovate[bot]'
+  locale:
+    description: 'Section names: `en` (`Added`, `Changed`, …, `Dependencies`) or `fr` (`Ajouté`, `Modifié`, …, `Dépendances`).'
+    required: false
+    default: 'en'
   github-token:
     description: 'Token for the GitHub API: pull request files (`check`), and the pull request of each fragment and each commit since the previous tag (`release`).'
     required: false
@@ -56,19 +60,22 @@ runs:
         CHANGELOG_REQUIRE_PATHS: ${{ inputs.require-paths }}
         CHANGELOG_SKIP_LABEL: ${{ inputs.skip-label }}
         CHANGELOG_SKIP_AUTHORS: ${{ inputs.skip-authors }}
+        CHANGELOG_LOCALE: ${{ inputs.locale }}
       run: |
         case "$CHANGELOG_COMMAND" in
           check)
             node "$GITHUB_ACTION_PATH/cli.mjs" check \
               --require-paths "$CHANGELOG_REQUIRE_PATHS" \
               --skip-label "$CHANGELOG_SKIP_LABEL" \
-              --skip-authors "$CHANGELOG_SKIP_AUTHORS"
+              --skip-authors "$CHANGELOG_SKIP_AUTHORS" \
+              --locale "$CHANGELOG_LOCALE"
             ;;
           release)
             node "$GITHUB_ACTION_PATH/cli.mjs" release \
               --version "$CHANGELOG_VERSION" \
               --skip-label "$CHANGELOG_SKIP_LABEL" \
-              --skip-authors "$CHANGELOG_SKIP_AUTHORS"
+              --skip-authors "$CHANGELOG_SKIP_AUTHORS" \
+              --locale "$CHANGELOG_LOCALE"
             ;;
           *)
             echo "::error::Unknown command \"$CHANGELOG_COMMAND\". Use check or release."

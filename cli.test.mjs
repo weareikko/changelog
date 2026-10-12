@@ -24,13 +24,21 @@ function setup({ fragments = {}, changelog = '# Changelog\n\n## 0.1.0 - 2026-01-
     git: (args) => commits[args.at(-1)] ?? '',
     fetch: async (url, init) => {
       io.requests.push({ url, init });
-      const path = url.replace('https://api.github.com', '');
+      const path = url.replace(/^(https:\/\/api\.github\.com|https:\/\/gitlab\.test\/api\/v4)/, '');
       if (!(path in routes)) return { ok: false, status: 404 };
       return { ok: true, json: async () => routes[path] };
     },
   };
   return io;
 }
+
+const GITLAB = {
+  GITLAB_CI: 'true',
+  CI_API_V4_URL: 'https://gitlab.test/api/v4',
+  CI_PROJECT_ID: '42',
+  CI_PROJECT_URL: 'https://gitlab.test/acme/repo',
+  GITLAB_TOKEN: 'glpat-secret',
+};
 
 function writeEvent(io, pullRequest) {
   const path = join(io.cwd, 'event.json');
@@ -43,6 +51,10 @@ describe('parseArgs', () => {
     assert.deepEqual(parseArgs(['release', '--version', '1.0.0']), { command: 'release', options: { version: '1.0.0' } });
   });
 
+  it('reads an option without value as empty', () => {
+    assert.deepEqual(parseArgs(['check', '--require-paths']), { command: 'check', options: { 'require-paths': '' } });
+  });
+
   it('rejects positional arguments', () => {
     assert.throws(() => parseArgs(['check', 'oops']), /Unexpected argument "oops"/);
   });
@@ -53,6 +65,26 @@ describe('main', () => {
     const io = setup();
     assert.equal(await main(['nope'], io), 2);
     assert.match(io.errors[0], /^Usage:/);
+  });
+
+  it('prints usage on request', async () => {
+    for (const argv of [[], ['help'], ['--help'], ['-h']]) {
+      const io = setup();
+      assert.equal(await main(argv, io), 0);
+      assert.match(io.logs[0], /^Usage: changelog check/);
+      assert.deepEqual(io.errors, []);
+    }
+  });
+
+  it('rejects an unknown locale or platform', async () => {
+    let io = setup();
+    assert.equal(await main(['check', '--locale', 'de'], io), 1);
+    assert.equal(io.errors[0], 'Unknown locale "de". Use en or fr.');
+    io = setup();
+    assert.equal(await main(['check', '--locale', 'constructor'], io), 1);
+    io = setup();
+    assert.equal(await main(['release', '--version', '1.0.0', '--platform', 'bitbucket'], io), 1);
+    assert.equal(io.errors[0], 'Unknown platform "bitbucket". Use github or gitlab.');
   });
 
   it('fails without a .changelog directory', async () => {
@@ -74,6 +106,15 @@ describe('check', () => {
     const io = setup({ fragments: { 'a.md': '## Oops\n' } });
     assert.equal(await main(['check'], io), 1);
     assert.match(io.errors[0], /^\.changelog\/a\.md:1: Heading "## Oops"/);
+  });
+
+  it('validates the sections of the given locale', async () => {
+    const io = setup({ fragments: { 'a.md': '### Ajouté\n- A\n', 'b.md': '### Added\n- B\n' } });
+    assert.equal(await main(['check', '--locale', 'fr'], io), 1);
+    assert.deepEqual(io.errors, [
+      '.changelog/b.md:1: Unknown section "Added". Use one of: Ajouté, Modifié, Déprécié, Supprimé, Corrigé, Sécurité, Dépendances.',
+      '.changelog/b.md:2: Line "- B" is outside of any section. A fragment starts with a "### <Section>" heading.',
+    ]);
   });
 
   it('reports invalid fragments as GitHub annotations', async () => {
@@ -183,6 +224,90 @@ describe('check', () => {
       assert.equal(await main(['check', '--require-paths', 'packages/**'], io), 1);
       assert.match(io.errors[0], /answered 404/);
     });
+
+    it('fails without GITHUB_REPOSITORY', async () => {
+      io = setup();
+      delete io.env.GITHUB_REPOSITORY;
+      writeEvent(io, { number: 7, labels: [] });
+      assert.equal(await main(['check', '--require-paths', 'packages/**'], io), 1);
+      assert.deepEqual(io.errors, ['GITHUB_REPOSITORY is not set: cannot read pull requests from the GitHub API.']);
+      assert.equal(io.requests.length, 0);
+    });
+  });
+
+  it('requires nothing outside a pull request', async () => {
+    let io = setup();
+    assert.equal(await main(['check', '--require-paths', 'packages/**'], io), 0);
+    io = setup();
+    const path = join(io.cwd, 'event.json');
+    writeFileSync(path, JSON.stringify({ ref: 'refs/heads/main' }));
+    io.env.GITHUB_EVENT_PATH = path;
+    assert.equal(await main(['check', '--require-paths', 'packages/**'], io), 0);
+    assert.equal(io.requests.length, 0);
+  });
+
+  describe('on a GitLab merge request', () => {
+    const diffs = (list) => ({ '/projects/42/merge_requests/7/diffs?per_page=100&page=1': list });
+    const mr = (extra = {}) => ({ '/projects/42/merge_requests/7': { iid: 7, title: 'Add a', author: { username: 'jane' }, labels: [], ...extra } });
+
+    it('requires nothing outside a merge request', async () => {
+      const io = setup({ env: GITLAB });
+      assert.equal(await main(['check', '--require-paths', 'packages/**'], io), 0);
+      assert.equal(io.requests.length, 0);
+    });
+
+    it('fails without a token, with a clear error', async () => {
+      const io = setup({ env: { ...GITLAB, GITLAB_TOKEN: '', CI_MERGE_REQUEST_IID: '7' } });
+      assert.equal(await main(['check', '--require-paths', 'packages/**'], io), 1);
+      assert.deepEqual(io.errors, [
+        'GITLAB_TOKEN is not set (GITLAB_TOKEN needs a token with the read_api scope: CI_JOB_TOKEN cannot read merge requests): cannot read merge requests from the GitLab API.',
+      ]);
+      assert.equal(io.requests.length, 0);
+    });
+
+    it('fails when matching files change without a fragment', async () => {
+      const page1 = Array.from({ length: 100 }, (_, index) => ({ new_path: `docs/${index}.md`, deleted_file: false }));
+      const io = setup({
+        env: { ...GITLAB, CI_MERGE_REQUEST_IID: '7' },
+        routes: {
+          ...mr(),
+          '/projects/42/merge_requests/7/diffs?per_page=100&page=1': page1,
+          '/projects/42/merge_requests/7/diffs?per_page=100&page=2': [
+            { new_path: 'packages/a.ts', deleted_file: false },
+            { new_path: '.changelog/old.md', deleted_file: true },
+          ],
+        },
+      });
+      assert.equal(await main(['check', '--require-paths', 'packages/**'], io), 1);
+      assert.match(io.errors[0], /^\.changelog:1: This merge request changes 1 file\(s\) matching packages\/\*\* \(e\.g\. packages\/a\.ts\) but adds no fragment/);
+      assert.equal(io.requests.length, 3);
+      assert.deepEqual(io.requests[0].init.headers, { 'PRIVATE-TOKEN': 'glpat-secret' });
+    });
+
+    it('passes when a fragment is added', async () => {
+      const io = setup({
+        env: { ...GITLAB, CI_MERGE_REQUEST_IID: '7' },
+        routes: { ...mr(), ...diffs([{ new_path: 'packages/a.ts' }, { new_path: '.changelog/a.md', deleted_file: false }]) },
+      });
+      assert.equal(await main(['check', '--require-paths', 'packages/**'], io), 0);
+    });
+
+    it('skips the requirement with the skip label or for skip-authors', async () => {
+      let io = setup({ env: { ...GITLAB, CI_MERGE_REQUEST_IID: '7' }, routes: mr({ labels: ['no-changelog'] }) });
+      assert.equal(await main(['check', '--require-paths', 'packages/**'], io), 0);
+      assert.equal(io.logs[1], 'Label "no-changelog" is set: no fragment required.');
+
+      io = setup({ env: { ...GITLAB, CI_MERGE_REQUEST_IID: '7' }, routes: mr({ author: { username: 'renovate-bot' } }) });
+      assert.equal(await main(['check', '--require-paths', 'packages/**', '--skip-authors', 'renovate-bot'], io), 0);
+      assert.equal(io.logs[1], 'Author "renovate-bot" is in skip-authors: no fragment required.');
+      assert.equal(io.requests.length, 1);
+    });
+
+    it('uses GitHub when --platform says so', async () => {
+      const io = setup({ env: { ...GITLAB, CI_MERGE_REQUEST_IID: '7' } });
+      assert.equal(await main(['check', '--require-paths', 'packages/**', '--platform', 'github'], io), 0);
+      assert.equal(io.requests.length, 0);
+    });
   });
 });
 
@@ -233,10 +358,11 @@ describe('release', () => {
   });
 
   it('works outside GitHub without pull request lookups', async () => {
-    const io = setup({ fragments: { 'a.md': '### Added\n- A\n' }, commits: { '.changelog/a.md': 'aaa 1' } });
+    const io = setup({ fragments: { 'a.md': '### Added\n- A\n' }, commits: { '.changelog/a.md': 'aaa 1', HEAD: '0.1.0' } });
     delete io.env.GITHUB_REPOSITORY;
     assert.equal(await main(['release', '--version', '0.2.0'], io), 0);
     assert.equal(io.requests.length, 0);
+    assert.deepEqual(io.errors, ['Warning: GITHUB_REPOSITORY is not set: no pull request references and no entries from skip-authors.']);
     assert.match(readFileSync(join(io.cwd, 'CHANGELOG.md'), 'utf8'), /## 0\.2\.0 - \d{4}-\d{2}-\d{2}\n\n### Added\n\n- A\n/);
   });
 
@@ -320,6 +446,98 @@ describe('release', () => {
       const io = setup({ commits: { HEAD: '1.0.0', '1.0.0..HEAD': 's1\n' } });
       assert.equal(await main(['release', '--version', '1.1.0', '--skip-authors', ''], io), 0);
       assert.equal(io.requests.length, 0);
+    });
+  });
+
+  describe('on GitLab', () => {
+    const mrs = (iid, username, extra = {}) => [
+      { iid, title: `chore(deps): update ${iid}`, state: 'merged', author: { username }, labels: [], ...extra },
+    ];
+
+    it('writes merge request references, French sections and skip-authors entries', async () => {
+      const io = setup({
+        env: GITLAB,
+        fragments: { 'a.md': '### Corrigé\n- Corrige a\n', 'b.md': '### Ajouté\n- Ajoute b\n' },
+        commits: {
+          '.changelog/a.md': 'sa 100',
+          '.changelog/b.md': 'sb 200',
+          HEAD: 'v2026.9.0\n',
+          'v2026.9.0..HEAD': 's4\ns3\ns2\ns1\nsa\n',
+        },
+        routes: {
+          '/projects/42/repository/commits/sa/merge_requests': [{ iid: 8, state: 'opened' }, ...mrs(9, 'jane')],
+          '/projects/42/repository/commits/s1/merge_requests': mrs(10, 'renovate-bot'),
+          '/projects/42/repository/commits/s2/merge_requests': mrs(11, 'renovate-bot', { labels: ['no-changelog'] }),
+          '/projects/42/repository/commits/s3/merge_requests': [{ iid: 12, title: 'No author', state: 'merged' }],
+          '/projects/42/repository/commits/s4/merge_requests': [],
+        },
+      });
+      const argv = ['release', '--version', 'v2026.10.0', '--date', '2026-10-12', '--locale', 'fr', '--skip-authors', 'renovate-bot'];
+      assert.equal(await main(argv, io), 0);
+      assert.match(
+        readFileSync(join(io.cwd, 'CHANGELOG.md'), 'utf8'),
+        new RegExp(
+          [
+            '## v2026\\.10\\.0 - 2026-10-12',
+            '',
+            '### Ajouté',
+            '',
+            '- Ajoute b',
+            '',
+            '### Corrigé',
+            '',
+            '- Corrige a \\[\\[!9\\]\\]',
+            '',
+            '### Dépendances',
+            '',
+            '- Update 10 \\[\\[!10\\]\\]',
+            '',
+            '\\[!9\\]: https://gitlab\\.test/acme/repo/-/merge_requests/9',
+            '\\[!10\\]: https://gitlab\\.test/acme/repo/-/merge_requests/10',
+            '',
+            '## 0\\.1\\.0',
+          ].join('\n'),
+        ),
+      );
+      assert.equal(io.errors.length, 1);
+      assert.match(io.errors[0], /^Cannot find the merge request of \.changelog\/b\.md \(sb\): GitLab API \/projects\/42\/repository\/commits\/sb\/merge_requests answered 404\.$/);
+    });
+
+    it('adds no reference and no skip-authors entry without a token, with a warning', async () => {
+      const io = setup({
+        env: { ...GITLAB, GITLAB_TOKEN: undefined },
+        fragments: { 'a.md': '### Added\n- Add a\n' },
+        commits: { '.changelog/a.md': 'sa 100', HEAD: '1.0.0', '1.0.0..HEAD': 'sa\n' },
+      });
+      assert.equal(await main(['release', '--version', '1.1.0', '--date', '2026-10-12'], io), 0);
+      assert.equal(io.requests.length, 0);
+      assert.deepEqual(io.errors, [
+        'Warning: GITLAB_TOKEN is not set (GITLAB_TOKEN needs a token with the read_api scope: CI_JOB_TOKEN cannot read merge requests): no merge request references and no entries from skip-authors.',
+      ]);
+      assert.match(readFileSync(join(io.cwd, 'CHANGELOG.md'), 'utf8'), /## 1\.1\.0 - 2026-10-12\n\n### Added\n\n- Add a\n\n## 0\.1\.0/);
+    });
+
+    it('warns with a GitHub annotation when GitLab variables are missing in GitHub Actions', async () => {
+      const io = setup({ env: { GITHUB_ACTIONS: 'true' }, fragments: { 'a.md': '### Added\n- A\n' } });
+      assert.equal(await main(['release', '--version', '1.1.0', '--platform', 'gitlab'], io), 0);
+      assert.deepEqual(io.errors, [
+        '::warning::CI_API_V4_URL, CI_PROJECT_ID, CI_PROJECT_URL, GITLAB_TOKEN are not set (GITLAB_TOKEN needs a token with the read_api scope: CI_JOB_TOKEN cannot read merge requests): no merge request references and no entries from skip-authors.',
+      ]);
+    });
+
+    it('names only the missing project variables when the token is set', async () => {
+      const io = setup({ env: { GITLAB_CI: 'true', GITLAB_TOKEN: 'x', CI_API_V4_URL: 'https://gitlab.test/api/v4' } });
+      assert.equal(await main(['release', '--version', '1.1.0'], io), 0);
+      assert.equal(io.errors[0], 'Warning: CI_PROJECT_ID, CI_PROJECT_URL are not set: no merge request references and no entries from skip-authors.');
+      const one = setup({ env: { ...GITLAB, CI_PROJECT_URL: '' } });
+      assert.equal(await main(['release', '--version', '1.1.0'], one), 0);
+      assert.equal(one.errors[0], 'Warning: CI_PROJECT_URL is not set: no merge request references and no entries from skip-authors.');
+    });
+
+    it('encodes a project path given as CI_PROJECT_ID', async () => {
+      const io = setup({ env: { ...GITLAB, CI_PROJECT_ID: 'acme/repo' }, commits: { HEAD: '1.0.0', '1.0.0..HEAD': 's1\n' } });
+      assert.equal(await main(['release', '--version', '1.1.0'], io), 0);
+      assert.equal(io.requests[0].url, 'https://gitlab.test/api/v4/projects/acme%2Frepo/repository/commits/s1/merge_requests');
     });
   });
 });

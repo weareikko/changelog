@@ -1,18 +1,29 @@
 #!/usr/bin/env node
 // Command line entry: `check` validates fragments (and, on pull requests,
 // requires one), `release` folds them into CHANGELOG.md, with the pull
-// requests of `skip-authors` (e.g. Renovate) under Dependencies.
+// requests of `skip-authors` (e.g. Renovate) under Dependencies. Runs on
+// GitHub Actions and GitLab CI: see platforms.mjs.
 
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { appendFileSync, existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join, matchesGlob } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { buildRelease, insertSection, parseFragment } from './changelog.mjs';
+import { buildRelease, insertSection, parseFragment, SECTIONS } from './changelog.mjs';
+import { createPlatform, detectPlatform } from './platforms.mjs';
 
 const DIRECTORY = '.changelog';
 const SKIP_LABEL = 'no-changelog';
 const SKIP_AUTHORS = 'renovate[bot]';
+
+const USAGE = `Usage: changelog check [--require-paths <globs>] [options]
+       changelog release --version <version> [--date <YYYY-MM-DD>] [options]
+
+Options:
+  --skip-label <label>       Label that lifts the fragment requirement (default: ${SKIP_LABEL})
+  --skip-authors <logins>    Authors that need no fragment; release lists their pull requests (default: ${SKIP_AUTHORS})
+  --locale en|fr             Section names (default: en)
+  --platform github|gitlab   API to read pull or merge requests from (default: gitlab in GitLab CI, else github)`;
 
 /**
  * @typedef {object} Io
@@ -45,6 +56,22 @@ function splitList(value) {
     .filter(Boolean);
 }
 
+/**
+ * The platform and the section names of a run.
+ * @param {Io} io
+ * @param {Record<string, string>} options
+ */
+function resolveContext(io, options) {
+  const locale = options.locale || 'en';
+  if (!Object.hasOwn(SECTIONS, locale)) {
+    throw new Error(`Unknown locale "${locale}". Use ${Object.keys(SECTIONS).join(' or ')}.`);
+  }
+  return {
+    platform: createPlatform(options.platform || detectPlatform(io.env), io),
+    sections: SECTIONS[locale],
+  };
+}
+
 /** @param {Io} io */
 function listFragments(io) {
   const directory = join(io.cwd, DIRECTORY);
@@ -57,6 +84,11 @@ function listFragments(io) {
     .sort();
 }
 
+/** @param {string} message */
+function escapeAnnotation(message) {
+  return message.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+}
+
 /**
  * @param {Io} io
  * @param {{ file: string, line: number, message: string }[]} errors
@@ -64,8 +96,7 @@ function listFragments(io) {
 function reportErrors(io, errors) {
   for (const { file, line, message } of errors) {
     if (io.env.GITHUB_ACTIONS === 'true') {
-      const escaped = message.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
-      io.error(`::error file=${file},line=${line}::${escaped}`);
+      io.error(`::error file=${file},line=${line}::${escapeAnnotation(message)}`);
     } else {
       io.error(`${file}:${line}: ${message}`);
     }
@@ -74,28 +105,10 @@ function reportErrors(io, errors) {
 
 /**
  * @param {Io} io
- * @param {string} path API path, starting with `/`.
+ * @param {string} message
  */
-async function api(io, path) {
-  const base = io.env.GITHUB_API_URL || 'https://api.github.com';
-  const headers = { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' };
-  if (io.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${io.env.GITHUB_TOKEN}`;
-  const response = await io.fetch(`${base}${path}`, { headers });
-  if (!response.ok) throw new Error(`GitHub API ${path} answered ${response.status}.`);
-  return response.json();
-}
-
-/**
- * @param {Io} io
- * @param {number} pr
- */
-async function listPullRequestFiles(io, pr) {
-  const files = [];
-  for (let page = 1; ; page += 1) {
-    const batch = await api(io, `/repos/${io.env.GITHUB_REPOSITORY}/pulls/${pr}/files?per_page=100&page=${page}`);
-    files.push(...batch);
-    if (batch.length < 100) return files;
-  }
+function warn(io, message) {
+  io.error(io.env.GITHUB_ACTIONS === 'true' ? `::warning::${escapeAnnotation(message)}` : `Warning: ${message}`);
 }
 
 /**
@@ -106,47 +119,45 @@ async function listPullRequestFiles(io, pr) {
  * @param {Record<string, string>} options
  */
 export async function check(io, options) {
+  const { platform, sections } = resolveContext(io, options);
   const fragments = listFragments(io);
-  const errors = fragments.flatMap((file) => parseFragment(readFileSync(join(io.cwd, file), 'utf8'), file).errors);
+  const errors = fragments.flatMap((file) => parseFragment(readFileSync(join(io.cwd, file), 'utf8'), file, sections).errors);
   reportErrors(io, errors);
   if (errors.length > 0) return 1;
   io.log(`${fragments.length} fragment(s) valid.`);
 
   const patterns = splitList(options['require-paths']);
-  const event = io.env.GITHUB_EVENT_PATH ? JSON.parse(readFileSync(io.env.GITHUB_EVENT_PATH, 'utf8')) : {};
-  const pullRequest = event.pull_request;
-  if (patterns.length === 0 || !pullRequest) return 0;
+  if (patterns.length === 0) return 0;
+  const pull = await platform.currentPull();
+  if (!pull) return 0;
 
   const skipLabel = options['skip-label'] || SKIP_LABEL;
-  if (pullRequest.labels?.some((label) => label.name === skipLabel)) {
+  if (pull.labels.includes(skipLabel)) {
     io.log(`Label "${skipLabel}" is set: no fragment required.`);
     return 0;
   }
 
-  const author = pullRequest.user?.login;
-  if (splitList(options['skip-authors'] ?? SKIP_AUTHORS).includes(author)) {
-    io.log(`Author "${author}" is in skip-authors: no fragment required.`);
+  if (splitList(options['skip-authors'] ?? SKIP_AUTHORS).includes(pull.author)) {
+    io.log(`Author "${pull.author}" is in skip-authors: no fragment required.`);
     return 0;
   }
 
-  const files = await listPullRequestFiles(io, pullRequest.number);
+  const files = await platform.listFiles(pull.number);
   const hasFragment = files.some(
     (file) =>
-      file.status !== 'removed' &&
-      file.filename.startsWith(`${DIRECTORY}/`) &&
-      file.filename.endsWith('.md') &&
-      !file.filename.slice(DIRECTORY.length + 1).includes('/'),
+      !file.removed &&
+      file.path.startsWith(`${DIRECTORY}/`) &&
+      file.path.endsWith('.md') &&
+      !file.path.slice(DIRECTORY.length + 1).includes('/'),
   );
-  const matched = files
-    .map((file) => file.filename)
-    .filter((name) => patterns.some((pattern) => matchesGlob(name, pattern)));
+  const matched = files.map((file) => file.path).filter((path) => patterns.some((pattern) => matchesGlob(path, pattern)));
 
   if (matched.length > 0 && !hasFragment) {
     reportErrors(io, [
       {
         file: DIRECTORY,
         line: 1,
-        message: `This pull request changes ${matched.length} file(s) matching ${patterns.join(', ')} (e.g. ${matched[0]}) but adds no fragment in ${DIRECTORY}/. Add one, or set the "${skipLabel}" label.`,
+        message: `This ${platform.noun} changes ${matched.length} file(s) matching ${patterns.join(', ')} (e.g. ${matched[0]}) but adds no fragment in ${DIRECTORY}/. Add one, or set the "${skipLabel}" label.`,
       },
     ]);
     return 1;
@@ -155,30 +166,21 @@ export async function check(io, options) {
 }
 
 /**
- * Find the merged pull request of a commit.
- * @param {Io} io
- * @param {string} sha
- */
-async function findMergedPull(io, sha) {
-  const pulls = await api(io, `/repos/${io.env.GITHUB_REPOSITORY}/commits/${sha}/pulls`);
-  return pulls.find((pull) => pull.merged_at) ?? null;
-}
-
-/**
  * Find the merged pull request that added a fragment.
  * @param {Io} io
+ * @param {import('./platforms.mjs').Platform} platform
  * @param {string} file
  * @returns {Promise<{ pr: number | null, time: number }>}
  */
-async function resolveOrigin(io, file) {
+async function resolveOrigin(io, platform, file) {
   const [sha, time] = io.git(['log', '--diff-filter=A', '--format=%H %ct', '-1', '--', file]).trim().split(' ');
   if (!sha) return { pr: null, time: Number.POSITIVE_INFINITY };
-  if (!io.env.GITHUB_REPOSITORY) return { pr: null, time: Number(time) };
+  if (platform.missing) return { pr: null, time: Number(time) };
   try {
-    const merged = await findMergedPull(io, sha);
+    const merged = await platform.findMergedPull(sha);
     return { pr: merged ? merged.number : null, time: Number(time) };
   } catch (error) {
-    io.error(`Cannot find the pull request of ${file} (${sha}): ${error.message}`);
+    io.error(`Cannot find the ${platform.noun} of ${file} (${sha}): ${error.message}`);
     return { pr: null, time: Number(time) };
   }
 }
@@ -187,12 +189,13 @@ async function resolveOrigin(io, file) {
  * List the pull requests of `authors` merged since the previous tag, oldest
  * first, without the ones that have the skip label.
  * @param {Io} io
+ * @param {import('./platforms.mjs').Platform} platform
  * @param {string[]} authors
  * @param {string} skipLabel
  * @returns {Promise<{ number: number, title: string }[]>}
  */
-async function listAuthorPulls(io, authors, skipLabel) {
-  if (authors.length === 0 || !io.env.GITHUB_REPOSITORY) return [];
+async function listAuthorPulls(io, platform, authors, skipLabel) {
+  if (authors.length === 0 || platform.missing) return [];
 
   let tag = '';
   try {
@@ -201,7 +204,7 @@ async function listAuthorPulls(io, authors, skipLabel) {
     // No tag: this is the first release.
   }
   if (!tag) {
-    io.log('No previous tag: no pull request from skip-authors to add.');
+    io.log(`No previous tag: no ${platform.noun} from skip-authors to add.`);
     return [];
   }
 
@@ -210,17 +213,12 @@ async function listAuthorPulls(io, authors, skipLabel) {
   for (const sha of shas) {
     let pull;
     try {
-      pull = await findMergedPull(io, sha);
+      pull = await platform.findMergedPull(sha);
     } catch (error) {
-      io.error(`Cannot find the pull request of ${sha}: ${error.message}`);
+      io.error(`Cannot find the ${platform.noun} of ${sha}: ${error.message}`);
       continue;
     }
-    if (
-      !pull ||
-      pulls.has(pull.number) ||
-      !authors.includes(pull.user?.login) ||
-      pull.labels?.some((label) => label.name === skipLabel)
-    ) {
+    if (!pull || pulls.has(pull.number) || !authors.includes(pull.author) || pull.labels.includes(skipLabel)) {
       continue;
     }
     pulls.set(pull.number, { number: pull.number, title: pull.title });
@@ -250,29 +248,40 @@ export async function release(io, options) {
   const version = options.version;
   if (!version) throw new Error('Missing --version.');
   const date = options.date || new Date().toISOString().slice(0, 10);
+  const { platform, sections } = resolveContext(io, options);
+  if (platform.missing) {
+    warn(io, `${platform.missing}: no ${platform.noun} references and no entries from skip-authors.`);
+  }
 
   const fragments = [];
   for (const file of listFragments(io)) {
     const text = readFileSync(join(io.cwd, file), 'utf8');
     if (text.trim() === '') continue;
-    fragments.push({ file, text, ...(await resolveOrigin(io, file)) });
+    fragments.push({ file, text, ...(await resolveOrigin(io, platform, file)) });
   }
   fragments.sort((a, b) => a.time - b.time || a.file.localeCompare(b.file));
   const pulls = await listAuthorPulls(
     io,
+    platform,
     splitList(options['skip-authors'] ?? SKIP_AUTHORS),
     options['skip-label'] || SKIP_LABEL,
   );
 
-  const repositoryUrl = `${io.env.GITHUB_SERVER_URL || 'https://github.com'}/${io.env.GITHUB_REPOSITORY}`;
-  const { section, body, used, errors } = buildRelease({ version, date, repositoryUrl, fragments, pulls });
+  const { section, body, used, errors } = buildRelease({
+    version,
+    date,
+    sections,
+    references: platform.references,
+    fragments,
+    pulls,
+  });
   reportErrors(io, errors);
   if (errors.length > 0) {
     io.error('Invalid fragments: CHANGELOG.md and .changelog/ are unchanged.');
     return 1;
   }
   if (section === null) {
-    io.log(`No fragment in ${DIRECTORY}/ and no pull request from skip-authors: CHANGELOG.md is unchanged.`);
+    io.log(`No fragment in ${DIRECTORY}/ and no ${platform.noun} from skip-authors: CHANGELOG.md is unchanged.`);
     setOutputs(io, { changed: 'false', body: '' });
     return 0;
   }
@@ -296,10 +305,11 @@ export async function main(argv, io) {
     const { command, options } = parseArgs(argv);
     if (command === 'check') return await check(io, options);
     if (command === 'release') return await release(io, options);
-    io.error(
-      'Usage: cli.mjs check [--require-paths <globs>] [--skip-label <label>] [--skip-authors <logins>]\n' +
-        '       cli.mjs release --version <version> [--date <YYYY-MM-DD>] [--skip-label <label>] [--skip-authors <logins>]',
-    );
+    if (command === undefined || command === 'help' || command === '--help' || command === '-h') {
+      io.log(USAGE);
+      return 0;
+    }
+    io.error(USAGE);
     return 2;
   } catch (error) {
     io.error(error.message);
@@ -307,7 +317,8 @@ export async function main(argv, io) {
   }
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+// `realpathSync`: npm runs the `changelog` bin through a symbolic link.
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   process.exitCode = await main(process.argv.slice(2), {
     cwd: process.cwd(),
     env: process.env,

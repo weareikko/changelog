@@ -1,8 +1,15 @@
 // Pure changelog logic: parse fragments, build a release section, insert it
-// into CHANGELOG.md. No I/O here — see cli.mjs for git, GitHub and files.
+// into CHANGELOG.md. No I/O here — see cli.mjs for git and files, and
+// platforms.mjs for the GitHub and GitLab APIs.
 
-/** Keep a Changelog sections, in the order a release renders them. */
-export const SECTIONS = ['Added', 'Changed', 'Deprecated', 'Removed', 'Fixed', 'Security', 'Dependencies'];
+/**
+ * Keep a Changelog sections by locale, in the order a release renders them.
+ * The last one gets the pull requests without fragment (dependency updates).
+ */
+export const SECTIONS = {
+  en: ['Added', 'Changed', 'Deprecated', 'Removed', 'Fixed', 'Security', 'Dependencies'],
+  fr: ['Ajouté', 'Modifié', 'Déprécié', 'Supprimé', 'Corrigé', 'Sécurité', 'Dépendances'],
+};
 
 const LINK_DEFINITION = /^\[[^\]]+\]:\s+\S/;
 
@@ -11,10 +18,11 @@ const LINK_DEFINITION = /^\[[^\]]+\]:\s+\S/;
  * each followed by its entries, and optional link definitions. Nothing else.
  * @param {string} text
  * @param {string} file Path used in error messages.
+ * @param {string[]} sections Allowed section names, e.g. `SECTIONS.en`.
  * @returns {{ sections: Map<string, string[]>, links: string[], errors: { file: string, line: number, message: string }[] }}
  */
-export function parseFragment(text, file) {
-  const sections = new Map();
+export function parseFragment(text, file, sections) {
+  const found = new Map();
   const links = [];
   const errors = [];
   let current = null;
@@ -29,11 +37,11 @@ export function parseFragment(text, file) {
       const title = heading[2].trim();
       if (heading[1] !== '###') {
         errors.push({ file, line: lineNumber, message: `Heading "${line}" is not allowed. A fragment only contains "### <Section>" headings.` });
-      } else if (!SECTIONS.includes(title)) {
-        errors.push({ file, line: lineNumber, message: `Unknown section "${title}". Use one of: ${SECTIONS.join(', ')}.` });
+      } else if (!sections.includes(title)) {
+        errors.push({ file, line: lineNumber, message: `Unknown section "${title}". Use one of: ${sections.join(', ')}.` });
       } else {
         current = title;
-        if (!sections.has(title)) sections.set(title, []);
+        if (!found.has(title)) found.set(title, []);
       }
       return;
     }
@@ -48,33 +56,33 @@ export function parseFragment(text, file) {
       return;
     }
 
-    sections.get(current).push(line);
+    found.get(current).push(line);
   });
 
-  for (const [title, entries] of sections) {
+  for (const [title, entries] of found) {
     if (entries.length === 0) {
       errors.push({ file, line: 1, message: `Section "${title}" has no entries.` });
     }
   }
 
-  return { sections, links, errors };
+  return { sections: found, links, errors };
 }
 
 /**
- * Append a ` [[#N]]` reference to each top-level entry that has no pull
- * request (`[#N]`) or commit (`[abc1234]`) reference yet and does not mention
- * the pull request.
+ * Append a ` [[#N]]` (GitHub) or ` [[!N]]` (GitLab) reference to each
+ * top-level entry that has no pull request (`[#N]`), merge request (`[!N]`)
+ * or commit (`[abc1234]`) reference yet and does not mention the reference.
  * @param {string[]} entries
- * @param {number} pr
+ * @param {string} reference `#N` or `!N`.
  * @returns {{ entries: string[], added: boolean }}
  */
-export function addReference(entries, pr) {
-  const mention = new RegExp(`\\[(#\\d+|[0-9a-f]{7,40})\\]|#${pr}(?!\\d)`);
+export function addReference(entries, reference) {
+  const mention = new RegExp(`\\[([#!]\\d+|[0-9a-f]{7,40})\\]|${reference}(?!\\d)`);
   let added = false;
   const result = entries.map((entry) => {
     if (!entry.startsWith('- ') || mention.test(entry)) return entry;
     added = true;
-    return `${entry} [[#${pr}]]`;
+    return `${entry} [[${reference}]]`;
   });
   return { entries: result, added };
 }
@@ -92,22 +100,30 @@ export function titleToEntry(title) {
 /**
  * Build the release section from parsed fragments and pull requests without
  * fragment (e.g. dependency updates from a bot).
- * @param {{ version: string, date: string, repositoryUrl: string, fragments: { file: string, text: string, pr?: number | null }[], pulls?: { number: number, title: string }[] }} options
- *   Fragments in the order their entries should appear. Each pull request
- *   becomes a `Dependencies` entry, after the fragment entries, unless a
- *   fragment came from the same pull request.
+ * @param {object} options
+ * @param {string} options.version
+ * @param {string} options.date
+ * @param {string[]} options.sections Section names, e.g. `SECTIONS.en`.
+ * @param {{ prefix: string, url: (number: number) => string }} options.references
+ *   How to write a pull request reference: `#` and `<repository>/pull/N` on
+ *   GitHub, `!` and `<project>/-/merge_requests/N` on GitLab.
+ * @param {{ file: string, text: string, pr?: number | null }[]} options.fragments
+ *   Fragments in the order their entries should appear.
+ * @param {{ number: number, title: string }[]} [options.pulls] Each pull
+ *   request becomes an entry of the last section (`Dependencies`), after the
+ *   fragment entries, unless a fragment came from the same pull request.
  * @returns {{ section: string | null, body: string, used: string[], errors: { file: string, line: number, message: string }[] }}
  *   `section` is null when there is no entry. `used` lists the fragments that went into it.
  */
-export function buildRelease({ version, date, repositoryUrl, fragments, pulls = [] }) {
-  const merged = new Map(SECTIONS.map((title) => [title, []]));
+export function buildRelease({ version, date, sections, references, fragments, pulls = [] }) {
+  const merged = new Map(sections.map((title) => [title, []]));
   const prs = new Set();
   const links = [];
   const used = [];
   const errors = [];
 
   for (const fragment of fragments) {
-    const parsed = parseFragment(fragment.text, fragment.file);
+    const parsed = parseFragment(fragment.text, fragment.file, sections);
     errors.push(...parsed.errors);
     if (parsed.errors.length > 0 || parsed.sections.size === 0) continue;
 
@@ -117,7 +133,7 @@ export function buildRelease({ version, date, repositoryUrl, fragments, pulls = 
         merged.get(title).push(...entries);
         continue;
       }
-      const referenced = addReference(entries, fragment.pr);
+      const referenced = addReference(entries, `${references.prefix}${fragment.pr}`);
       merged.get(title).push(...referenced.entries);
       if (referenced.added) prs.add(fragment.pr);
     }
@@ -125,9 +141,10 @@ export function buildRelease({ version, date, repositoryUrl, fragments, pulls = 
   }
 
   const credited = new Set(fragments.map((fragment) => fragment.pr).filter(Boolean));
+  const dependencies = merged.get(sections.at(-1));
   for (const pull of pulls) {
     if (credited.has(pull.number)) continue;
-    merged.get('Dependencies').push(`${titleToEntry(pull.title)} [[#${pull.number}]]`);
+    dependencies.push(`${titleToEntry(pull.title)} [[${references.prefix}${pull.number}]]`);
     prs.add(pull.number);
   }
 
@@ -142,9 +159,9 @@ export function buildRelease({ version, date, repositoryUrl, fragments, pulls = 
 
   // Pull request definitions first, by number (generated or written in a fragment),
   // then the other definitions in the order they appear.
-  const pullNumber = (line) => Number(line.match(/^\[#(\d+)\]:/)?.[1] ?? Number.NaN);
+  const pullNumber = (line) => Number(line.match(/^\[[#!](\d+)\]:/)?.[1] ?? Number.NaN);
   const definitions = [
-    ...[...prs].map((pr) => `[#${pr}]: ${repositoryUrl}/pull/${pr}`),
+    ...[...prs].map((pr) => `[${references.prefix}${pr}]: ${references.url(pr)}`),
     ...links,
   ]
     .filter((line, index, all) => all.indexOf(line) === index)
