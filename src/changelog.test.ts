@@ -109,7 +109,7 @@ describe('SECTIONS', () => {
 describe('addReference', () => {
   it('appends the reference to top-level entries only', () => {
     assert.deepEqual(addReference(['- One', '  continued', '  - nested'], '#12'), {
-      entries: ['- One [[#12]]', '  continued', '  - nested'],
+      entries: ['- One ([#12])', '  continued', '  - nested'],
       added: true,
     });
   });
@@ -118,18 +118,18 @@ describe('addReference', () => {
     assert.deepEqual(
       addReference(['- One (#12)', '- Two [[#123], [abc1234]]', '- Fix #120 crash'], '#12'),
       {
-        entries: ['- One (#12)', '- Two [[#123], [abc1234]]', '- Fix #120 crash [[#12]]'],
+        entries: ['- One (#12)', '- Two [[#123], [abc1234]]', '- Fix #120 crash ([#12])'],
         added: true,
       },
     );
-    assert.deepEqual(addReference(['- Two [[#123]]'], '#12'), {
-      entries: ['- Two [[#123]]'],
+    assert.deepEqual(addReference(['- Two ([#123])'], '#12'), {
+      entries: ['- Two ([#123])'],
       added: false,
     });
     assert.deepEqual(
       addReference(['- Three [[915f084]]', '- Four [[915f084], [#3]]', '- Five [link]'], '#12'),
       {
-        entries: ['- Three [[915f084]]', '- Four [[915f084], [#3]]', '- Five [link] [[#12]]'],
+        entries: ['- Three [[915f084]]', '- Four [[915f084], [#3]]', '- Five [link] ([#12])'],
         added: true,
       },
     );
@@ -138,16 +138,16 @@ describe('addReference', () => {
   it('writes merge request references and keeps the ones of both platforms', () => {
     assert.deepEqual(
       addReference(
-        ['- One', '- Two [[!3]]', '- Three [[#4]]', '- Four (!12)', '- Five !120'],
+        ['- One', '- Two ([!3])', '- Three ([#4])', '- Four (!12)', '- Five !120'],
         '!12',
       ),
       {
         entries: [
-          '- One [[!12]]',
-          '- Two [[!3]]',
-          '- Three [[#4]]',
+          '- One ([!12])',
+          '- Two ([!3])',
+          '- Three ([#4])',
           '- Four (!12)',
-          '- Five !120 [[!12]]',
+          '- Five !120 ([!12])',
         ],
         added: true,
       },
@@ -196,11 +196,11 @@ describe('buildRelease', () => {
       [
         '### Added',
         '',
-        '- Add a [[#3]]',
+        '- Add a ([#3])',
         '',
         '### Fixed',
         '',
-        '- Fix b [[#12]]',
+        '- Fix b ([#12])',
         '- Fix c',
         '',
         '[#3]: https://github.com/acme/repo/pull/3',
@@ -216,14 +216,14 @@ describe('buildRelease', () => {
       fragments: [
         {
           file: 'a.md',
-          text: '### Added\n- A [[#127]]\n\n[#127]: https://github.com/acme/repo/pull/127\n',
+          text: '### Added\n- A ([#127])\n\n[#127]: https://github.com/acme/repo/pull/127\n',
           pr: 130,
         },
       ],
     });
     assert.equal(
       result.body,
-      '### Added\n\n- A [[#127]]\n\n[#127]: https://github.com/acme/repo/pull/127',
+      '### Added\n\n- A ([#127])\n\n[#127]: https://github.com/acme/repo/pull/127',
     );
   });
 
@@ -234,7 +234,7 @@ describe('buildRelease', () => {
         { file: 'a.md', text: '### Added\n- A\n\n[x]: https://x.test\n', pr: 129 },
         {
           file: 'b.md',
-          text: '### Added\n- B [[#127]]\n\n[#127]: https://github.com/acme/repo/pull/127\n[abc1234]: https://c.test\n',
+          text: '### Added\n- B ([#127])\n\n[#127]: https://github.com/acme/repo/pull/127\n[abc1234]: https://c.test\n',
           pr: 128,
         },
       ],
@@ -260,7 +260,7 @@ describe('buildRelease', () => {
     });
     assert.equal(
       result.body,
-      '### Added\n\n- A [[#1]]\n- B [[#1]]\n\n[#1]: https://github.com/acme/repo/pull/1\n[x]: https://x.test',
+      '### Added\n\n- A ([#1])\n- B ([#1])\n\n[#1]: https://github.com/acme/repo/pull/1\n[x]: https://x.test',
     );
   });
 
@@ -280,9 +280,9 @@ describe('buildRelease', () => {
       [
         '### Dependencies',
         '',
-        '- Update by hand [[#9]]',
-        '- Update dependency x to v2 [[#12]]',
-        '- Update dependency y to v3 [[#4]]',
+        '- Update by hand ([#9])',
+        '- Update dependency x to v2 ([#12])',
+        '- Update dependency y to v3 ([#4])',
         '',
         '[#4]: https://github.com/acme/repo/pull/4',
         '[#9]: https://github.com/acme/repo/pull/9',
@@ -301,7 +301,7 @@ describe('buildRelease', () => {
     assert.equal(result.change, 'fix');
     assert.equal(
       result.body,
-      '### Dependencies\n\n- Update x [[#5]]\n\n[#5]: https://github.com/acme/repo/pull/5',
+      '### Dependencies\n\n- Update x ([#5])\n\n[#5]: https://github.com/acme/repo/pull/5',
     );
   });
 
@@ -317,7 +317,7 @@ describe('buildRelease', () => {
         { file: 'a.md', text: '### Corrigé\n- Corrige a\n### Dépendances\n- À la main\n', pr: 12 },
         {
           file: 'b.md',
-          text: '### Ajouté\n- Ancien [[!3]]\n\n[!3]: https://gitlab.test/acme/repo/-/merge_requests/3\n',
+          text: '### Ajouté\n- Ancien ([!3])\n\n[!3]: https://gitlab.test/acme/repo/-/merge_requests/3\n',
           pr: 13,
         },
       ],
@@ -328,16 +328,16 @@ describe('buildRelease', () => {
       [
         '### Ajouté',
         '',
-        '- Ancien [[!3]]',
+        '- Ancien ([!3])',
         '',
         '### Corrigé',
         '',
-        '- Corrige a [[!12]]',
+        '- Corrige a ([!12])',
         '',
         '### Dépendances',
         '',
-        '- À la main [[!12]]',
-        '- Update x [[!4]]',
+        '- À la main ([!12])',
+        '- Update x ([!4])',
         '',
         '[!3]: https://gitlab.test/acme/repo/-/merge_requests/3',
         '[!4]: https://gitlab.test/acme/repo/-/merge_requests/4',

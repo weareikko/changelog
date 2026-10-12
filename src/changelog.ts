@@ -223,7 +223,7 @@ export function parsePrerelease(
 }
 
 /**
- * Append a ` [[#N]]` (GitHub) or ` [[!N]]` (GitLab) reference to each
+ * Append a ` ([#N])` (GitHub) or ` ([!N])` (GitLab) reference to each
  * top-level entry that has no pull request (`[#N]`), merge request (`[!N]`)
  * or commit (`[abc1234]`) reference yet and does not mention the reference.
  */
@@ -236,7 +236,7 @@ export function addReference(
   const result = entries.map((entry) => {
     if (!entry.startsWith('- ') || mention.test(entry)) return entry;
     added = true;
-    return `${entry} [[${reference}]]`;
+    return `${entry} ([${reference}])`;
   });
   return { entries: result, added };
 }
@@ -307,7 +307,7 @@ export function buildRelease({
   const dependencies = merged.get(sections.at(-1)!)!;
   for (const pull of pulls) {
     if (credited.has(pull.number)) continue;
-    dependencies.push(`${titleToEntry(pull.title)} [[${references.prefix}${pull.number}]]`);
+    dependencies.push(`${titleToEntry(pull.title)} ([${references.prefix}${pull.number}])`);
     prs.add(pull.number);
   }
 

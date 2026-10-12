@@ -119,7 +119,7 @@ describe('release', () => {
       '',
       '### Fixed',
       '',
-      '- Fix a [[#12]]',
+      '- Fix a ([#12])',
       '- Fix local',
       '',
       '[#12]: https://github.com/acme/repo/pull/12',
@@ -219,11 +219,11 @@ describe('release', () => {
         '',
         '### Ajouté',
         '',
-        '- Nouveau [[!3]]',
+        '- Nouveau ([!3])',
         '',
         '### Dépendances',
         '',
-        '- Update x [[!4]]',
+        '- Update x ([!4])',
         '',
         '[!3]: https://gitlab.example.com/group/project/-/merge_requests/3',
         '[!4]: https://gitlab.example.com/group/project/-/merge_requests/4',
@@ -306,7 +306,7 @@ describe('release', () => {
     });
     expect(await code).toBe(0);
     expect(read('CHANGELOG.md')).toContain(
-      '## 1.1.1 - 2026-10-12\n\n### Dependencies\n\n- Update x [[#7]]',
+      '## 1.1.1 - 2026-10-12\n\n### Dependencies\n\n- Update x ([#7])',
     );
   });
 
