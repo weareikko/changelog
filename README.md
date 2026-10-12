@@ -245,7 +245,7 @@ release:
 Notes:
 
 - **`GIT_DEPTH` for `check`**: the clone must contain the base commit of the merge request. Set `GIT_DEPTH` to more than the number of commits of your merge requests (the GitLab default is 20), or to `0` for the full history. A merged results pipeline only needs a depth of 2. When the commit is missing, `check` fails and says so.
-- **`--skip-authors` on GitLab**: GitLab has no fixed bot username, so there is no default. Give the username of your Renovate bot with `--skip-authors` or a `CHANGELOG_SKIP_AUTHORS` CI/CD variable (for example at the group level).
+- **`--skip-authors` on GitLab**: GitLab has no fixed bot username, so there is no default. Give the username of your Renovate bot with `--skip-authors` or a `CHANGELOG_SKIP_AUTHORS` CI/CD variable (for example at the group level). Only do this when that user opens dependency updates only: `check` requires no fragment from any of its merge requests, and `release` lists each of them without a fragment under `Dependencies`. When Renovate writes its own fragment (a `postUpgradeTasks` command), leave `--skip-authors` empty.
 - **Labels**: in a merge request pipeline, `check` reads the labels from `CI_MERGE_REQUEST_LABELS`. GitLab does not start a pipeline when a label changes: after you set the `no-changelog` label, run the pipeline again.
 - **Branch pipelines**: without `CI_MERGE_REQUEST_IID`, `check --require-paths` asks the API for the open merge request of `CI_COMMIT_BRANCH`. When there is none, it only validates the fragments.
 

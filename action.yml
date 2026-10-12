@@ -66,6 +66,10 @@ runs:
       run: |
         set -euo pipefail
         PACKAGE_VERSION="$(node -p 'require(process.env.GITHUB_ACTION_PATH + "/package.json").version')"
+        # `--prefix` keeps npx away from the package.json of the working
+        # directory: in a clone of this repository at that version, npx
+        # otherwise runs the bin of the root project, which is not linked.
+        changelog() { npx --yes --prefix "$RUNNER_TEMP" "@weareikko/changelog@$PACKAGE_VERSION" "$@"; }
         case "$CHANGELOG_COMMAND" in
           check)
             # `check` lists the files of the pull request with `git diff <base>...HEAD`:
@@ -74,10 +78,10 @@ runs:
               && [[ "$(git rev-parse --is-shallow-repository)" == true ]]; then
               git fetch --no-tags --quiet --unshallow origin
             fi
-            npx --yes "@weareikko/changelog@$PACKAGE_VERSION" check
+            changelog check
             ;;
           release)
-            npx --yes "@weareikko/changelog@$PACKAGE_VERSION" release --version "$CHANGELOG_RELEASE_VERSION"
+            changelog release --version "$CHANGELOG_RELEASE_VERSION"
             ;;
           *)
             echo "::error::Unknown command \"$CHANGELOG_COMMAND\". Use check or release."
