@@ -70,10 +70,14 @@ jobs:
     command: release
     version: ${{ steps.version.outputs.version }}
 
-- run: |
+- env:
+    VERSION: ${{ steps.version.outputs.version }}
+  run: |
     git add CHANGELOG.md .changelog
-    git commit -m "Release ${{ steps.version.outputs.version }}"
+    git commit -m "Release $VERSION"
 ```
+
+Pass expressions to `run:` through `env:`, never inline, to avoid shell injection.
 
 `release` validates all fragments first. If one is invalid, it fails and changes nothing. Otherwise it inserts `## <version> - <YYYY-MM-DD>` before the latest release in `CHANGELOG.md` and deletes the fragments it used. It fails if `CHANGELOG.md` already has a section for that version. With no fragment, it changes nothing and sets `changed` to `false`.
 
