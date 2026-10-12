@@ -2,7 +2,10 @@ import { assert, describe, it } from 'vitest';
 import {
   addReference,
   buildRelease,
+  changeLevel,
+  formatSection,
   insertSection,
+  isBreakingEntry,
   isFragmentPath,
   parseFragment,
   SECTIONS,
@@ -168,8 +171,6 @@ describe('titleToEntry', () => {
 
 describe('buildRelease', () => {
   const base = {
-    version: '1.2.0',
-    date: '2026-10-12',
     sections: SECTIONS.en,
     references: {
       prefix: '#' as const,
@@ -188,11 +189,10 @@ describe('buildRelease', () => {
     });
     assert.deepEqual(result.errors, []);
     assert.deepEqual(result.used, ['.changelog/b.md', '.changelog/a.md', '.changelog/c.md']);
+    assert.equal(result.change, 'feature');
     assert.equal(
-      result.section,
+      result.body,
       [
-        '## 1.2.0 - 2026-10-12',
-        '',
         '### Added',
         '',
         '- Add a [[#3]]',
@@ -207,7 +207,6 @@ describe('buildRelease', () => {
         '[x]: https://x.test',
       ].join('\n'),
     );
-    assert.equal(result.body, result.section!.split('\n').slice(2).join('\n'));
   });
 
   it('adds no link definition when every entry already has a reference', () => {
@@ -240,7 +239,7 @@ describe('buildRelease', () => {
       ],
     });
     assert.equal(
-      result.body.split('\n\n').at(-1),
+      result.body!.split('\n\n').at(-1),
       [
         '[#127]: https://github.com/acme/repo/pull/127',
         '[#129]: https://github.com/acme/repo/pull/129',
@@ -298,9 +297,10 @@ describe('buildRelease', () => {
       pulls: [{ number: 5, title: 'chore(deps): update x' }],
     });
     assert.deepEqual(result.used, []);
+    assert.equal(result.change, 'fix');
     assert.equal(
-      result.section,
-      '## 1.2.0 - 2026-10-12\n\n### Dependencies\n\n- Update x [[#5]]\n\n[#5]: https://github.com/acme/repo/pull/5',
+      result.body,
+      '### Dependencies\n\n- Update x [[#5]]\n\n[#5]: https://github.com/acme/repo/pull/5',
     );
   });
 
@@ -345,13 +345,14 @@ describe('buildRelease', () => {
     );
   });
 
-  it('returns no section when fragments are empty', () => {
+  it('returns no body when fragments are empty', () => {
     const result = buildRelease({ ...base, fragments: [{ file: 'a.md', text: '\n\n', pr: 1 }] });
-    assert.equal(result.section, null);
+    assert.equal(result.body, null);
+    assert.equal(result.change, null);
     assert.deepEqual(result.used, []);
   });
 
-  it('returns errors and no section when a fragment is invalid', () => {
+  it('returns errors and no body when a fragment is invalid', () => {
     const result = buildRelease({
       ...base,
       fragments: [
@@ -360,9 +361,79 @@ describe('buildRelease', () => {
       ],
       pulls: [{ number: 5, title: 'Update x' }],
     });
-    assert.equal(result.section, null);
+    assert.equal(result.body, null);
     assert.equal(result.errors.length, 1);
     assert.equal(result.errors[0].file, 'b.md');
+  });
+});
+
+describe('isBreakingEntry', () => {
+  it('accepts the three markers, after an optional package prefix', () => {
+    for (const entry of [
+      '- Breaking: drop Node.js 22',
+      '- **Breaking:** drop Node.js 22',
+      '- ⚠️ drop Node.js 22',
+      '- ⚠ drop Node.js 22',
+      '- **CLI**: Breaking: rename --foo',
+      '- **CLI:** **Breaking:** rename --foo',
+      '- **@scope/pkg:** ⚠️ rename --foo',
+      '- **BREAKING**: Remove the `sse` MCP transport',
+      '- breaking: lower case',
+      '- **MCP**: **Breaking**: remove `sse`',
+    ]) {
+      assert.isTrue(isBreakingEntry(entry), entry);
+    }
+  });
+
+  it('rejects other entries', () => {
+    for (const entry of [
+      '- Add a breaking change detector',
+      '- Breaking change without colon',
+      '- **Breaking** without colon',
+      '  - Breaking: a sub-entry',
+      '- **CLI**: Add Breaking: in the middle',
+      'Breaking: not an entry',
+    ]) {
+      assert.isFalse(isBreakingEntry(entry), entry);
+    }
+  });
+});
+
+describe('changeLevel', () => {
+  const sections = (entries: Record<string, string[]>) => new Map(Object.entries(entries));
+
+  it('is breaking when any entry is breaking', () => {
+    assert.equal(
+      changeLevel(sections({ Added: ['- A'], Fixed: ['- Breaking: B'] }), 'Added'),
+      'breaking',
+    );
+  });
+
+  it('is a feature with an entry in the given Added section, else a fix', () => {
+    assert.equal(changeLevel(sections({ Ajouté: ['- A'], Corrigé: [] }), 'Ajouté'), 'feature');
+    assert.equal(changeLevel(sections({ Ajouté: [], Corrigé: ['- B'] }), 'Ajouté'), 'fix');
+    assert.equal(changeLevel(sections({ Dependencies: ['- C'] }), 'Added'), 'fix');
+  });
+
+  it('gives buildRelease the level of French fragments', () => {
+    const result = buildRelease({
+      sections: SECTIONS.fr,
+      references: {
+        prefix: '!',
+        url: (number) => `https://gitlab.test/-/merge_requests/${number}`,
+      },
+      fragments: [{ file: 'a.md', text: '### Ajouté\n- Nouveau\n' }],
+    });
+    assert.equal(result.change, 'feature');
+  });
+});
+
+describe('formatSection', () => {
+  it('adds the version heading', () => {
+    assert.equal(
+      formatSection('1.2.0', '2026-10-12', '### Fixed\n\n- Fix'),
+      '## 1.2.0 - 2026-10-12\n\n### Fixed\n\n- Fix',
+    );
   });
 });
 

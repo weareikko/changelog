@@ -7,7 +7,7 @@ import { createPlatform } from './platform.js';
 import { release } from './release.js';
 
 export const HELP = `Usage: changelog check [options]
-       changelog release --version <version> [options]
+       changelog release --version <version|auto> [options]
 
 ${__PKG_NAME__} ${__PKG_VERSION__}: validate .changelog/ fragments on pull and
 merge requests, and fold them into CHANGELOG.md at release time.
@@ -20,7 +20,10 @@ Commands:
 Options:
   --require-paths <globs>    check: changes to these files need a fragment (env: CHANGELOG_REQUIRE_PATHS)
   --codequality <file>       check: write a GitLab Code Quality report
-  --version <version>        release: version heading, written as given (1.2.0 or v1.2.0)
+  --version <version|auto>   release: version heading, written as given (1.2.0 or v1.2.0);
+                             auto: the next version from the entries
+  --current <version>        release: with --version auto, the version to bump (default: the
+                             latest version tag, else 0.0.0; env: CHANGELOG_CURRENT_VERSION)
   --date <YYYY-MM-DD>        release: date of the heading (default: today)
   --notes-file <file>        release: write the new section without its heading
   --dotenv <file>            release: write CHANGELOG_CHANGED and CHANGELOG_VERSION (GitLab dotenv report)

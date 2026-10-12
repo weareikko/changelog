@@ -150,6 +150,23 @@ describe('resolveConfig', () => {
     ).toBe('Invalid --date "12/10/2026".');
   });
 
+  it('reads the current version for --version auto only', () => {
+    expect(resolveConfig(['release', '--version', 'auto', '--current', '1.2.0'], {})).toMatchObject(
+      { version: 'auto', current: '1.2.0' },
+    );
+    expect(
+      resolveConfig(['release', '--version', 'auto'], { CHANGELOG_CURRENT_VERSION: '0.4.7' }),
+    ).toMatchObject({ current: '0.4.7' });
+    expect(resolveConfig(['release', '--version', '1.2.0'], {})).toMatchObject({ current: '' });
+    expect(
+      configError(() => resolveConfig(['release', '--version', '1.2.0', '--current', '1.1.0'], {}))
+        .message,
+    ).toBe('--current only applies to "--version auto".');
+    expect(configError(() => resolveConfig(['check', '--current', '1.1.0'], {})).message).toBe(
+      '--current only applies to "changelog release".',
+    );
+  });
+
   it('rejects an unknown locale', () => {
     expect(configError(() => resolveConfig(['check', '--locale', 'de'], {})).hint).toContain(
       'en, fr',

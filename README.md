@@ -9,11 +9,12 @@ It is one command line tool, `changelog`, with two commands:
 - `changelog check` validates the fragments. On a pull or merge request, it also requires a fragment when the change touches files that you select.
 - `changelog release` folds the fragments into `CHANGELOG.md`.
 
-It runs in GitLab CI with `npx`, and in GitHub Actions with `npx` or with the [GitHub Action](#github-actions) of this repository. It needs Node.js 24 or later and has no dependency.
+It runs in GitLab CI with `npx`, and in GitHub Actions with `npx` or with the [GitHub Action](#github-actions) of this repository. It needs Node.js 24 or later. Its only dependency is [`semver`](https://www.npmjs.com/package/semver).
 
 ```sh
 npx @weareikko/changelog check --require-paths 'src/**'
 npx @weareikko/changelog release --version 1.2.0
+npx @weareikko/changelog release --version auto
 ```
 
 This is the same fragment format as the `release` job of `studiometa/gitlab-ci`. With `--locale fr`, the sections have the French names of that job.
@@ -75,39 +76,66 @@ When the run has no open pull or merge request, `check` only validates the fragm
 
 For each fragment, `release` finds the commit that added it (`git log --diff-filter=A`) and asks the API which merged pull or merge request contains that commit. When the run knows its branch (`GITHUB_REF`, `CI_COMMIT_BRANCH`), a pull or merge request merged into that branch comes first. Otherwise, any merged pull or merge request counts: a stack merged with `gh stack merge` keeps the base branch of each pull request.
 
-`release` also adds an entry for each pull or merge request of `--skip-authors` merged since the previous tag (`git describe --tags --abbrev=0`), on the first-parent history of `HEAD`. The entry goes in the last section (`Dependencies`, or `Dépendances` with `--locale fr`): the title without its conventional commit prefix (`chore(deps): `), with an upper-case first letter, and its reference. These entries come after the `Dependencies` entries of the fragments. `release` skips the ones with the `--skip-label` label and the ones that added a fragment. With no previous tag, it adds none.
+`release` also adds an entry for each pull or merge request of `--skip-authors` merged since the previous tag, on the first-parent history of `HEAD`. The entry goes in the last section (`Dependencies`, or `Dépendances` with `--locale fr`): the title without its conventional commit prefix (`chore(deps): `), with an upper-case first letter, and its reference. These entries come after the `Dependencies` entries of the fragments. `release` skips the ones with the `--skip-label` label and the ones that added a fragment. With no previous tag, it adds none.
+
+The previous tag is the tag reachable from `HEAD` with the highest semantic version (`1.2.0` or `v1.2.0`). Other tags do not count, for example a moving major tag (`1`) or `latest`.
 
 `release` needs the full history: check out with `fetch-depth: 0` on GitHub and set `GIT_DEPTH: 0` on GitLab.
 
+### Automatic version
+
+`release --version auto` gets the next version from the entries that it folds (the fragments and the entries of `--skip-authors`). It bumps the current version: `--current <version>` (or `CHANGELOG_CURRENT_VERSION`), else the version of the previous tag, else `0.0.0`.
+
+| Entries                                              | From 1.0.0 | On 0.x | On a prerelease |
+| ---------------------------------------------------- | ---------- | ------ | --------------- |
+| A breaking entry                                     | major      | minor  | prerelease      |
+| An entry under `Added` (`Ajouté`), no breaking entry | minor      | patch  | prerelease      |
+| Other entries only (fixes, `Dependencies`)           | patch      | patch  | prerelease      |
+
+A prerelease gets the next prerelease with the same identifier (`1.0.0-rc.1` → `1.0.0-rc.2`). To release a stable version, a major version without a breaking entry, or a first prerelease, pass the version with `--version`.
+
+A breaking entry starts with one of these markers, in any case, after an optional package prefix (`**CLI**: ` or `**@scope/pkg:** `):
+
+```markdown
+- Breaking: Remove the `--foo` option
+- **Breaking:** Remove the `--foo` option
+- **BREAKING**: Remove the `sse` MCP transport
+- ⚠️ Remove the `--foo` option
+- **CLI**: Breaking: Remove the `--foo` option
+```
+
+When there is nothing to release, `release --version auto` changes no file, writes `changed=false` and an empty `version`, and exits with 0.
+
 Without API access (for example on your computer without a token), `release` warns, adds no reference and no entry from `--skip-authors`, and still folds the fragments.
 
-The tool only edits files. Bumping the version, committing, tagging and publishing stay in your pipeline.
+The tool only edits files. Writing the version in your package files, committing, tagging and publishing stay in your pipeline.
 
 ## Options
 
-| Option                      | Command   | Default                                          | Environment variable      | Description                                                                                                      |
-| --------------------------- | --------- | ------------------------------------------------ | ------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `--require-paths <globs>`   | `check`   | none                                             | `CHANGELOG_REQUIRE_PATHS` | Globs, one per line or comma-separated. Matching changes require a fragment.                                     |
-| `--codequality <file>`      | `check`   | none                                             |                           | Write a [GitLab Code Quality report](#gitlab-ci) of the errors.                                                  |
-| `--version <version>`       | `release` | required                                         |                           | Version heading.                                                                                                 |
-| `--date <YYYY-MM-DD>`       | `release` | today                                            |                           | Date of the version heading.                                                                                     |
-| `--notes-file <file>`       | `release` | none                                             |                           | Write the new section without its heading (empty when nothing changed).                                          |
-| `--dotenv <file>`           | `release` | none                                             |                           | Write `CHANGELOG_CHANGED=true\|false` and `CHANGELOG_VERSION=<version>`.                                         |
-| `--skip-label <label>`      | both      | `no-changelog`                                   | `CHANGELOG_SKIP_LABEL`    | Label that lifts the fragment requirement and skips a bot entry.                                                 |
-| `--skip-authors <names>`    | both      | `renovate[bot]` on GitHub, none on GitLab        | `CHANGELOG_SKIP_AUTHORS`  | Logins or usernames, one per line or comma-separated. An empty value means none.                                 |
-| `--locale en\|fr`           | both      | `en`                                             | `CHANGELOG_LOCALE`        | Section names.                                                                                                   |
-| `--platform github\|gitlab` | both      | detected                                         | `CHANGELOG_PLATFORM`      | `github` in GitHub Actions; `gitlab` when `GITLAB_CI`, `CI_PROJECT_ID` or `CI_SERVER_URL` is set; else `github`. |
-| `--project <id\|path>`      | both      | `CI_PROJECT_ID`                                  |                           | GitLab project.                                                                                                  |
-| `--mr <iid>`                | `check`   | `CI_MERGE_REQUEST_IID`                           |                           | GitLab merge request.                                                                                            |
-| `--gitlab-url <url>`        | both      | `CI_SERVER_URL`, else `https://$CI_SERVER_HOST`  |                           | GitLab instance.                                                                                                 |
-| `--gitlab-token <token>`    | both      | `GITLAB_TOKEN`, `GLAB_CLI_TOKEN`, `CI_JOB_TOKEN` |                           | GitLab token. See [Tokens](#tokens).                                                                             |
-| `--github-token <token>`    | both      | `GITHUB_TOKEN`                                   |                           | GitHub token.                                                                                                    |
+| Option                      | Command   | Default                                          | Environment variable        | Description                                                                                                      |
+| --------------------------- | --------- | ------------------------------------------------ | --------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `--require-paths <globs>`   | `check`   | none                                             | `CHANGELOG_REQUIRE_PATHS`   | Globs, one per line or comma-separated. Matching changes require a fragment.                                     |
+| `--codequality <file>`      | `check`   | none                                             |                             | Write a [GitLab Code Quality report](#gitlab-ci) of the errors.                                                  |
+| `--version <version\|auto>` | `release` | required                                         |                             | Version heading, or `auto`: see [Automatic version](#automatic-version).                                         |
+| `--current <version>`       | `release` | the previous tag, else `0.0.0`                   | `CHANGELOG_CURRENT_VERSION` | With `--version auto`: the version to bump.                                                                      |
+| `--date <YYYY-MM-DD>`       | `release` | today                                            |                             | Date of the version heading.                                                                                     |
+| `--notes-file <file>`       | `release` | none                                             |                             | Write the new section without its heading (empty when nothing changed).                                          |
+| `--dotenv <file>`           | `release` | none                                             |                             | Write `CHANGELOG_CHANGED=true\|false` and `CHANGELOG_VERSION=<version>` (the released version).                  |
+| `--skip-label <label>`      | both      | `no-changelog`                                   | `CHANGELOG_SKIP_LABEL`      | Label that lifts the fragment requirement and skips a bot entry.                                                 |
+| `--skip-authors <names>`    | both      | `renovate[bot]` on GitHub, none on GitLab        | `CHANGELOG_SKIP_AUTHORS`    | Logins or usernames, one per line or comma-separated. An empty value means none.                                 |
+| `--locale en\|fr`           | both      | `en`                                             | `CHANGELOG_LOCALE`          | Section names.                                                                                                   |
+| `--platform github\|gitlab` | both      | detected                                         | `CHANGELOG_PLATFORM`        | `github` in GitHub Actions; `gitlab` when `GITLAB_CI`, `CI_PROJECT_ID` or `CI_SERVER_URL` is set; else `github`. |
+| `--project <id\|path>`      | both      | `CI_PROJECT_ID`                                  |                             | GitLab project.                                                                                                  |
+| `--mr <iid>`                | `check`   | `CI_MERGE_REQUEST_IID`                           |                             | GitLab merge request.                                                                                            |
+| `--gitlab-url <url>`        | both      | `CI_SERVER_URL`, else `https://$CI_SERVER_HOST`  |                             | GitLab instance.                                                                                                 |
+| `--gitlab-token <token>`    | both      | `GITLAB_TOKEN`, `GLAB_CLI_TOKEN`, `CI_JOB_TOKEN` |                             | GitLab token. See [Tokens](#tokens).                                                                             |
+| `--github-token <token>`    | both      | `GITHUB_TOKEN`                                   |                             | GitHub token.                                                                                                    |
 
 Flags win over environment variables. `changelog --help` shows the options and `changelog --version` shows the version. The exit code is 0 on success, 1 when a check or a release fails, and 2 for a usage error.
 
 Outputs:
 
-- `release` appends `changed` (`true` or `false`) and `body` (the new section without its heading) to `GITHUB_OUTPUT` when it is set (GitHub Actions).
+- `release` appends `changed` (`true` or `false`), `version` (the released version: the given one, or the computed one with `--version auto`, empty when there is nothing to release) and `body` (the new section without its heading) to `GITHUB_OUTPUT` when it is set (GitHub Actions).
 - `--notes-file` and `--dotenv` work on both platforms.
 - `check` prints errors as `::error file=…,line=…::` annotations in GitHub Actions, and as `file:line: message` lines elsewhere.
 
@@ -166,7 +194,8 @@ Pass expressions to `run:` through `env:`, never inline, to prevent shell inject
 | Input           | Default               | Description                                                                                                                                           |
 | --------------- | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `command`       | required              | `check` or `release`.                                                                                                                                 |
-| `version`       | none                  | `release`: version heading, written as given.                                                                                                         |
+| `version`       | none                  | `release`: version heading, written as given, or `auto`.                                                                                              |
+| `current`       | none                  | `release` with `version: auto`: the version to bump. Default: the previous tag, else `0.0.0`.                                                         |
 | `require-paths` | none                  | `check`: globs, one per line or comma-separated. Matching changes require a fragment.                                                                 |
 | `skip-label`    | `no-changelog`        | `check`: label that lifts the fragment requirement. `release`: a pull request from `skip-authors` with this label gets no entry.                      |
 | `skip-authors`  | `renovate[bot]`       | Logins, one per line or comma-separated. `check`: their pull requests need no fragment. `release`: their pull requests become `Dependencies` entries. |
@@ -178,6 +207,7 @@ Pass expressions to `run:` through `env:`, never inline, to prevent shell inject
 | Output    | Description                                                                          |
 | --------- | ------------------------------------------------------------------------------------ |
 | `changed` | `release`: `true` when `CHANGELOG.md` got a new section.                             |
+| `version` | `release`: the released version (empty with `version: auto` and nothing to release). |
 | `body`    | `release`: the new section without its `##` heading, e.g. for a GitHub Release body. |
 
 ### Version of the action
@@ -218,12 +248,11 @@ changelog:release:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       when: manual
   script:
-    - VERSION=1.2.0 # compute the next version here
-    - npx --yes @weareikko/changelog@1 release --version "$VERSION" --skip-authors renovate-bot --dotenv release.env --notes-file release-notes.md
+    - npx --yes @weareikko/changelog@1 release --version auto --skip-authors renovate-bot --dotenv release.env --notes-file release-notes.md
     - . ./release.env
     - test "$CHANGELOG_CHANGED" = true || { echo "No fragment and no merge request from skip-authors."; exit 1; }
-    # Commit CHANGELOG.md and .changelog/, tag "$VERSION" and push them here,
-    # with a token that can write to the repository.
+    # Commit CHANGELOG.md and .changelog/, tag "$CHANGELOG_VERSION" and push
+    # them here, with a token that can write to the repository.
   artifacts:
     paths: [release-notes.md]
     reports:
@@ -292,7 +321,9 @@ The tests inject `fetch`, `git` and the working directory: they make no network 
 
 ### Release
 
-Run the `Release` workflow (`publish.yml`) from `main`:
+Each merge into `main` starts the `Release` workflow (`publish.yml`). It folds the fragments with `release --version auto` and releases the [automatic version](#automatic-version). Without a fragment and without a pull request from `renovate[bot]`, it releases nothing. When `main` has moved on since the run started, the run stops and the run of the newer commit releases.
+
+Run it by hand for another bump (a major version without a breaking entry, a prerelease, or the stable version of a prerelease):
 
 ```sh
 gh workflow run publish.yml -f bump=minor
@@ -301,9 +332,11 @@ gh workflow run publish.yml -f bump=prerelease -f preid=rc # 1.1.0-rc.1
 gh workflow run publish.yml -f bump=minor                  # 1.1.0 after 1.1.0-rc.1
 ```
 
+On a prerelease line, each merge releases the next prerelease (`1.1.0-rc.2`).
+
 The workflow:
 
-1. runs `npm run check`, bumps `package.json` (`npm version`), and folds `.changelog/` into `CHANGELOG.md` with the CLI built from this commit,
+1. runs `npm run check`, folds `.changelog/` into `CHANGELOG.md` with the CLI built from this commit, and sets the version in `package.json` (`npm version`),
 2. commits `Release <version>`, tags `<version>` (no `v` prefix), moves the major tag (`1`) for a stable version only, and pushes to `main`,
 3. builds and publishes `@weareikko/changelog` to npm with trusted publishing (OIDC, no token) and provenance: a prerelease (a version with a `-`) goes to the `next` dist-tag, any other version to `latest`; a version that npm already has is skipped,
 4. creates the GitHub release, marked as a prerelease and not as the latest release for a prerelease,

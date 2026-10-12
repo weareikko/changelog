@@ -76,17 +76,14 @@ export async function findAddingCommit(
   return sha ? { sha, time: Number(time) } : null;
 }
 
-/** The latest tag reachable from HEAD, or an empty string. */
-export async function findPreviousTag(git: Git): Promise<string> {
-  try {
-    return (await git(['describe', '--tags', '--abbrev=0', 'HEAD'])).trim();
-  } catch {
-    return '';
-  }
-}
-
 /** The first-parent commits from `tag` (excluded) to HEAD, oldest first. */
 export async function listCommitsSince(git: Git, tag: string): Promise<string[]> {
   const output = await git(['log', '--first-parent', '--format=%H', `${tag}..HEAD`]);
   return output.split('\n').filter(Boolean).toReversed();
+}
+
+/** The tags reachable from HEAD. */
+export async function listTags(git: Git): Promise<string[]> {
+  const output = await git(['tag', '--merged', 'HEAD']);
+  return output.split('\n').filter(Boolean);
 }

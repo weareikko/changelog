@@ -6,9 +6,9 @@ import { GitError } from './errors.js';
 import {
   createGit,
   findAddingCommit,
-  findPreviousTag,
   listChangedFiles,
   listCommitsSince,
+  listTags,
 } from './git.js';
 import { makeDirectory, tableGit } from './test-utils.js';
 
@@ -77,14 +77,15 @@ describe('git helpers on a repository', () => {
       time: expect.any(Number),
     });
     expect(await findAddingCommit(git, 'missing.txt')).toBeNull();
-    expect(await findPreviousTag(git)).toBe('1.0.0');
     expect(await listCommitsSince(git, '1.0.0')).toEqual([second]);
+    run('tag', 'v1.1.0');
+    expect(await listTags(git)).toEqual(['1.0.0', 'v1.1.0']);
   });
 
-  it('has no previous tag in a repository without tags', async () => {
+  it('lists no tag in a repository without tags', async () => {
     const { cwd, run } = repository();
     commit(cwd, run, { 'a.txt': 'a' });
-    expect(await findPreviousTag(createGit(cwd))).toBe('');
+    expect(await listTags(createGit(cwd))).toEqual([]);
   });
 
   it('explains a missing base commit', async () => {

@@ -2,6 +2,7 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   buildRelease,
+  formatSection,
   FRAGMENTS_DIRECTORY,
   insertSection,
   type ReleaseFragment,
@@ -10,7 +11,7 @@ import {
 import type { Config } from './config.js';
 import { ConfigError } from './errors.js';
 import { readFragments } from './fragments.js';
-import { findAddingCommit, findPreviousTag, listCommitsSince } from './git.js';
+import { findAddingCommit, listCommitsSince } from './git.js';
 import {
   formatDotenv,
   reportIssues,
@@ -20,6 +21,7 @@ import {
   writeOutputFile,
 } from './output.js';
 import type { Platform } from './platform.js';
+import { AUTO_VERSION, findVersionTag, nextVersion, resolveCurrentVersion } from './version.js';
 
 interface DatedFragment extends ReleaseFragment {
   time: number;
@@ -53,7 +55,7 @@ async function listAuthorChanges(
 ): Promise<ReleasePull[]> {
   if (config.skipAuthors.length === 0 || platform.unavailable) return [];
 
-  const tag = await findPreviousTag(runtime.git);
+  const tag = await findVersionTag(runtime.git);
   if (!tag) {
     runtime.stdout(`No previous tag: no ${platform.noun} from skip-authors to add.`);
     return [];
@@ -76,13 +78,18 @@ async function listAuthorChanges(
   return [...changes.values()];
 }
 
-function writeOutputs(config: Config, runtime: Runtime, changed: boolean, body: string): void {
-  setGitHubOutputs(runtime, { changed: String(changed), body });
+/**
+ * `version` is the released version: the given one, or with `--version auto`
+ * the computed one (empty when there is nothing to release).
+ */
+function writeOutputs(config: Config, runtime: Runtime, version: string, body: string): void {
+  const changed = String(body !== '');
+  setGitHubOutputs(runtime, { changed, version, body });
   if (config.dotenv) {
     writeOutputFile(
       runtime,
       config.dotenv,
-      formatDotenv({ CHANGELOG_CHANGED: String(changed), CHANGELOG_VERSION: config.version }),
+      formatDotenv({ CHANGELOG_CHANGED: changed, CHANGELOG_VERSION: version }),
     );
   }
   if (config.notesFile) writeOutputFile(runtime, config.notesFile, body ? `${body}\n` : '');
@@ -91,7 +98,8 @@ function writeOutputs(config: Config, runtime: Runtime, changed: boolean, body: 
 /**
  * Fold the fragments, and the changes of `skipAuthors` merged since the
  * previous tag, into a new CHANGELOG.md section, and delete the fragments.
- * Returns the exit code.
+ * With `--version auto`, the entries give the next version. Returns the exit
+ * code.
  */
 export async function release(
   config: Config,
@@ -107,9 +115,7 @@ export async function release(
 
   const fragments = await resolveFragments(platform, runtime);
   const pulls = await listAuthorChanges(config, platform, runtime);
-  const { section, body, used, errors } = buildRelease({
-    version: config.version,
-    date: config.date,
+  const { body, change, used, errors } = buildRelease({
     sections: config.sections,
     references: platform.references,
     fragments,
@@ -122,13 +128,22 @@ export async function release(
     return 1;
   }
 
-  if (section === null) {
+  const auto = config.version === AUTO_VERSION;
+  if (body === null || change === null) {
     runtime.stdout(
       `No fragment in ${FRAGMENTS_DIRECTORY}/ and no ${platform.noun} from skip-authors: CHANGELOG.md is unchanged.`,
     );
-    writeOutputs(config, runtime, false, '');
+    writeOutputs(config, runtime, auto ? '' : config.version, '');
     return 0;
   }
+
+  let version = config.version;
+  if (auto) {
+    const current = await resolveCurrentVersion(config.current, runtime.git);
+    version = nextVersion(current, change);
+    runtime.stdout(`Version ${version}: ${change} change since ${current}.`);
+  }
+  const section = formatSection(version, config.date, body);
 
   const changelogPath = join(runtime.cwd, 'CHANGELOG.md');
   if (!existsSync(changelogPath)) {
@@ -138,11 +153,11 @@ export async function release(
   }
   writeFileSync(
     changelogPath,
-    insertSection(readFileSync(changelogPath, 'utf8'), section, config.version),
+    insertSection(readFileSync(changelogPath, 'utf8'), section, version),
   );
   for (const file of used) rmSync(join(runtime.cwd, file));
 
   runtime.stdout(section);
-  writeOutputs(config, runtime, true, body);
+  writeOutputs(config, runtime, version, body);
   return 0;
 }

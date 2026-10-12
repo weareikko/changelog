@@ -10,7 +10,11 @@ inputs:
     description: '`check` validates the fragments (and requires one on pull requests when `require-paths` is set). `release` folds them into CHANGELOG.md under `version`.'
     required: true
   version:
-    description: 'Version heading for `release`, written as given (e.g. `1.2.0` or `v1.2.0`).'
+    description: 'Version heading for `release`, written as given (e.g. `1.2.0` or `v1.2.0`), or `auto` to compute the next version from the entries.'
+    required: false
+    default: ''
+  current:
+    description: '`release` with `version: auto`: the version to bump. Default: the highest version tag reachable from HEAD (check out with `fetch-depth: 0`), else `0.0.0`.'
     required: false
     default: ''
   require-paths:
@@ -38,6 +42,9 @@ outputs:
   changed:
     description: '`release`: `true` when CHANGELOG.md got a new section, `false` when there was no fragment and no pull request from `skip-authors`.'
     value: ${{ steps.run.outputs.changed }}
+  version:
+    description: '`release`: the released version: `version` as given, or the computed one with `version: auto` (empty when there is nothing to release).'
+    value: ${{ steps.run.outputs.version }}
   body:
     description: '`release`: the new section without its `##` heading, e.g. for a GitHub Release body.'
     value: ${{ steps.run.outputs.body }}
@@ -59,6 +66,7 @@ runs:
         GITHUB_TOKEN: ${{ inputs.github-token }}
         CHANGELOG_COMMAND: ${{ inputs.command }}
         CHANGELOG_RELEASE_VERSION: ${{ inputs.version }}
+        CHANGELOG_CURRENT_VERSION: ${{ inputs.current }}
         CHANGELOG_REQUIRE_PATHS: ${{ inputs.require-paths }}
         CHANGELOG_SKIP_LABEL: ${{ inputs.skip-label }}
         CHANGELOG_SKIP_AUTHORS: ${{ inputs.skip-authors }}
