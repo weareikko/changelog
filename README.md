@@ -44,8 +44,8 @@ Allowed sections, in the order a release renders them:
 
 Do not write the pull request number: it is not known when you write the fragment. At release time, the tool finds the merged pull or merge request that added each fragment and appends a reference to each top-level entry, with its link definition:
 
-- on GitHub, `[[#N]]` and `[#N]: <repository>/pull/N`,
-- on GitLab, `[[!N]]` and `[!N]: <project>/-/merge_requests/N`.
+- on GitHub, `([#N])` and `[#N]: <repository>/pull/N`, rendered as (#N),
+- on GitLab, `([!N])` and `[!N]: <project>/-/merge_requests/N`, rendered as (!N).
 
 An entry that already has a pull request (`[#N]`), merge request (`[!N]`) or commit (`[abc1234]`) reference, or that mentions the reference, stays as it is: old entries moved into a fragment keep their references. Other link definitions (`[abc1234]: https://…`) are allowed anywhere in a fragment; they move to the end of the release section.
 
