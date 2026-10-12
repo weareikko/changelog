@@ -57,7 +57,7 @@ describe('GitHubPlatform', () => {
     ).rejects.toThrow('The event payload of pull request #5 has no base SHA.');
   });
 
-  it('finds the merged pull request into the current branch', async () => {
+  it('finds the merged pull request, into the current branch first', async () => {
     const fetchImpl = routeFetch({
       '/repos/acme/repo/commits/abc/pulls': [
         { number: 1, title: 'Open', merged_at: null, base: { ref: 'main' } },
@@ -72,6 +72,10 @@ describe('GitHubPlatform', () => {
         },
       ],
       '/repos/acme/repo/commits/def/pulls': [{ number: 4, title: 'Bare', merged_at: '2026-01-03' }],
+      '/repos/acme/repo/commits/stacked/pulls': [
+        { number: 5, title: 'Open', merged_at: null, base: { ref: 'main' } },
+        { number: 6, title: 'Stacked', merged_at: '2026-01-04', base: { ref: 'feature/a' } },
+      ],
       '/repos/acme/repo/commits/none/pulls': [],
     });
     const github = platform(
@@ -83,6 +87,12 @@ describe('GitHubPlatform', () => {
       title: 'Merged',
       author: 'renovate[bot]',
       labels: ['deps'],
+    });
+    expect(await github.findMergedChange('stacked')).toEqual({
+      number: 6,
+      title: 'Stacked',
+      author: undefined,
+      labels: [],
     });
     expect(await github.findMergedChange('none')).toBeNull();
 

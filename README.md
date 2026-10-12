@@ -73,7 +73,7 @@ When the run has no open pull or merge request, `check` only validates the fragm
 
 `release --version <version>` validates all fragments first. If one is invalid, it fails and changes nothing. Otherwise it inserts `## <version> - <YYYY-MM-DD>` before the latest release in `CHANGELOG.md` and deletes the fragments that it used. It fails if `CHANGELOG.md` already has a section for that version. The version is written as given (`1.2.0` or `v1.2.0`).
 
-For each fragment, `release` finds the commit that added it (`git log --diff-filter=A`) and asks the API which merged pull or merge request contains that commit. When the run knows its branch (`GITHUB_REF`, `CI_COMMIT_BRANCH`), only a pull or merge request merged into that branch counts.
+For each fragment, `release` finds the commit that added it (`git log --diff-filter=A`) and asks the API which merged pull or merge request contains that commit. When the run knows its branch (`GITHUB_REF`, `CI_COMMIT_BRANCH`), a pull or merge request merged into that branch comes first. Otherwise, any merged pull or merge request counts: a stack merged with `gh stack merge` keeps the base branch of each pull request.
 
 `release` also adds an entry for each pull or merge request of `--skip-authors` merged since the previous tag (`git describe --tags --abbrev=0`), on the first-parent history of `HEAD`. The entry goes in the last section (`Dependencies`, or `Dépendances` with `--locale fr`): the title without its conventional commit prefix (`chore(deps): `), with an upper-case first letter, and its reference. These entries come after the `Dependencies` entries of the fragments. `release` skips the ones with the `--skip-label` label and the ones that added a fragment. With no previous tag, it adds none.
 

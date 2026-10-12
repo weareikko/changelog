@@ -42,8 +42,9 @@ export interface Platform {
   /** The open change of this run, or null when the run is for none. */
   currentChange(): Promise<Change | null>;
   /**
-   * The merged change that added `sha` to the current branch (when the run
-   * knows its branch), or null.
+   * The merged change that contains `sha`, or null. A change merged into the
+   * current branch comes first; a stacked change merged into another branch
+   * also counts.
    */
   findMergedChange(sha: string): Promise<MergedChange | null>;
 }

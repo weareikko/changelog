@@ -99,11 +99,13 @@ export class GitLabPlatform implements Platform {
 
   async findMergedChange(sha: string): Promise<MergedChange | null> {
     const requests = await this.api().listCommitMergeRequests(sha);
-    const merged = requests.find(
-      (request) =>
-        request.state === 'merged' &&
-        (!this.config.branch || request.target_branch === this.config.branch),
-    );
+    const mergedRequests = requests.filter((request) => request.state === 'merged');
+    // A merge request of a stack can target the branch of the merge request below it: the
+    // commit is in the history of the current branch, so any merged merge request fits when
+    // none targets the current branch.
+    const merged =
+      mergedRequests.find((request) => request.target_branch === this.config.branch) ??
+      mergedRequests[0];
     if (!merged) return null;
     return {
       number: merged.iid,
