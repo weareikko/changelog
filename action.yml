@@ -1,0 +1,68 @@
+name: 'Changelog fragments'
+description: 'Validate `.changelog/` fragments on pull requests and fold them into CHANGELOG.md at release time.'
+author: 'Ikko'
+branding:
+  icon: 'list'
+  color: 'blue'
+
+inputs:
+  command:
+    description: '`check` validates the fragments (and requires one on pull requests when `require-paths` is set). `release` folds them into CHANGELOG.md under `version`.'
+    required: true
+  version:
+    description: 'Version heading for `release`, written as given (e.g. `1.2.0` or `v1.2.0`).'
+    required: false
+    default: ''
+  require-paths:
+    description: '`check` on a pull request: globs, one per line or comma-separated. When the pull request changes a matching file, it must add or edit a fragment.'
+    required: false
+    default: ''
+  skip-label:
+    description: '`check` on a pull request: label that lifts the fragment requirement.'
+    required: false
+    default: 'no-changelog'
+  github-token:
+    description: 'Token for the GitHub API: pull request files (`check`) and the pull request of each fragment (`release`).'
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  changed:
+    description: '`release`: `true` when CHANGELOG.md got a new section, `false` when there was no fragment.'
+    value: ${{ steps.run.outputs.changed }}
+  body:
+    description: '`release`: the new section without its `##` heading, e.g. for a GitHub Release body.'
+    value: ${{ steps.run.outputs.body }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Node.js
+      uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+      with:
+        node-version: '24'
+
+    - name: Run changelog ${{ inputs.command }}
+      id: run
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        CHANGELOG_COMMAND: ${{ inputs.command }}
+        CHANGELOG_VERSION: ${{ inputs.version }}
+        CHANGELOG_REQUIRE_PATHS: ${{ inputs.require-paths }}
+        CHANGELOG_SKIP_LABEL: ${{ inputs.skip-label }}
+      run: |
+        case "$CHANGELOG_COMMAND" in
+          check)
+            node "$GITHUB_ACTION_PATH/cli.mjs" check \
+              --require-paths "$CHANGELOG_REQUIRE_PATHS" \
+              --skip-label "$CHANGELOG_SKIP_LABEL"
+            ;;
+          release)
+            node "$GITHUB_ACTION_PATH/cli.mjs" release --version "$CHANGELOG_VERSION"
+            ;;
+          *)
+            echo "::error::Unknown command \"$CHANGELOG_COMMAND\". Use check or release."
+            exit 1
+            ;;
+        esac
