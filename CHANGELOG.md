@@ -4,6 +4,31 @@ All notable changes to this project are documented in this file. Each pull reque
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.2.0 - 2026-10-12
+
+### Added
+
+- `release --version auto` (and `version: auto` in the action) computes the next version from the entries: a breaking entry (`Breaking: `, `**Breaking:** `, `**Breaking**: ` or `⚠️ `) gives a major version (minor on 0.x), an `Added` entry a minor version (patch on 0.x), other entries a patch, and a prerelease the next prerelease [[#6]]
+- `--current` option, `CHANGELOG_CURRENT_VERSION` variable and `current` action input: the version that `--version auto` bumps (default: the previous version tag, else `0.0.0`) [[#6]]
+- `version` output (`GITHUB_OUTPUT` and the action): the released version [[#6]]
+- `.changelog/prerelease` file: with a prerelease identifier (`alpha`, `beta`, `rc`) in it, `release --version auto` releases prereleases (`1.1.0` → `1.2.0-rc.0` → `1.2.0-rc.1`, a new identifier starts at 0, a bigger change moves to a higher version), and once the file is deleted it releases the stable version, with the line `Stable release of <prerelease>.` when there is no new entry [[#8]]
+- `check` validates `.changelog/prerelease`, also in the Code Quality report [[#8]]
+
+### Changed
+
+- `CHANGELOG_VERSION` in the `--dotenv` file is empty when `--version auto` has nothing to release [[#6]]
+- The previous tag of `--skip-authors` entries is the tag reachable from HEAD with the highest semantic version: a moving major tag (`1`) does not count [[#6]]
+- The `semver` package is a dependency [[#6]]
+- Without `.changelog/prerelease`, `release --version auto` on a prerelease releases its stable version instead of the next prerelease [[#8]]
+
+### Fixed
+
+- `release` adds the reference of a stacked pull or merge request merged into another branch, for example with `gh stack merge` [[#5]]
+
+[#5]: https://github.com/weareikko/changelog/pull/5
+[#6]: https://github.com/weareikko/changelog/pull/6
+[#8]: https://github.com/weareikko/changelog/pull/8
+
 ## 1.1.0 - 2026-10-12
 
 ### Added
