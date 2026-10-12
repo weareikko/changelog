@@ -1,0 +1,193 @@
+name: Release
+
+# npm trusted publishing is configured for this file name: keep the release
+# and the publish jobs in publish.yml, and do not call them from another workflow.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump (the pre* bumps and prerelease create a prerelease on the `next` npm dist-tag)'
+        type: choice
+        options: [patch, minor, major, prepatch, preminor, premajor, prerelease]
+        default: patch
+      preid:
+        description: 'Prerelease identifier, used by the pre* bumps and prerelease only'
+        type: choice
+        options: [alpha, beta, rc]
+        default: alpha
+
+concurrency: release
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Bump version and changelog
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+      pull-requests: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+      dist-tag: ${{ steps.version.outputs.dist-tag }}
+      notes: ${{ steps.notes.outputs.notes }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          # The changelog action reads the commit that added each fragment, and the tags.
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check
+        run: npm run check
+
+      # A prerelease version (with a `-`, e.g. 1.2.0-beta.0) goes to the `next`
+      # dist-tag on npm, any other version to `latest`.
+      - name: Bump version
+        id: version
+        env:
+          BUMP: ${{ inputs.bump }}
+          PREID: ${{ inputs.preid }}
+        run: |
+          echo "previous=$(node -p 'require("./package.json").version')" >> "$GITHUB_OUTPUT"
+          npm version "$BUMP" --preid "$PREID" --no-git-tag-version
+          VERSION="$(node -p 'require("./package.json").version')"
+          if [[ $VERSION == *-* ]]; then
+            PRERELEASE=true
+            DIST_TAG=next
+          else
+            PRERELEASE=false
+            DIST_TAG=latest
+          fi
+          {
+            echo "version=$VERSION"
+            echo "prerelease=$PRERELEASE"
+            echo "dist-tag=$DIST_TAG"
+          } >> "$GITHUB_OUTPUT"
+
+      # The CLI of this commit releases itself: the action runs the published
+      # package, and this version is not published yet. The CLI writes the
+      # `changed` and `body` outputs of this step to GITHUB_OUTPUT.
+      - name: Fold changelog fragments
+        id: changelog
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          npm run build
+          node bin/changelog.js release --version "$VERSION"
+
+      # Promoting a prerelease (1.1.0-rc.0 to 1.1.0) can have no new fragment:
+      # the prerelease already folded them. The GitHub release then says so.
+      - name: Release notes
+        id: notes
+        env:
+          CHANGED: ${{ steps.changelog.outputs.changed }}
+          BODY: ${{ steps.changelog.outputs.body }}
+          PREVIOUS: ${{ steps.version.outputs.previous }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if [[ $CHANGED == true ]]; then
+            NOTES="$BODY"
+          elif [[ $PREVIOUS == *-* && $VERSION != *-* ]]; then
+            echo "::notice::No fragment in .changelog/: stable release of $PREVIOUS."
+            NOTES="Stable release of $PREVIOUS."
+          else
+            echo "::error::No fragment in .changelog/: nothing to release."
+            exit 1
+          fi
+          DELIMITER="EOF_$(openssl rand -hex 16)"
+          {
+            echo "notes<<$DELIMITER"
+            echo "$NOTES"
+            echo "$DELIMITER"
+          } >> "$GITHUB_OUTPUT"
+
+      # Tags have no `v` prefix. The major tag (`1`) that `uses:
+      # weareikko/changelog@1` reads moves to stable releases only.
+      - name: Commit, tag and push
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          PRERELEASE: ${{ steps.version.outputs.prerelease }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md .changelog package.json package-lock.json
+          git commit -m "Release $VERSION"
+          git tag "$VERSION"
+          git push origin HEAD:main "refs/tags/$VERSION"
+          if [[ $PRERELEASE != true ]]; then
+            MAJOR="${VERSION%%.*}"
+            git tag --force "$MAJOR"
+            git push --force origin "refs/tags/$MAJOR"
+          fi
+
+  # A tag pushed with GITHUB_TOKEN does not start other workflows, so the
+  # release publishes in the same run. Every step can run again: npm skips a
+  # version that it already has, and the GitHub release is updated when it
+  # exists. "Re-run failed jobs" on this job publishes what a failed run left.
+  publish:
+    name: Publish to npm
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      VERSION: ${{ needs.release.outputs.version }}
+      PRERELEASE: ${{ needs.release.outputs.prerelease }}
+      DIST_TAG: ${{ needs.release.outputs.dist-tag }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: refs/tags/${{ needs.release.outputs.version }}
+
+      # Trusted publishing (OIDC) needs a recent npm: Node.js 24 has one.
+      - name: Setup Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '24'
+          cache: npm
+
+      # npm-publish runs with ignore-scripts: build here, not in prepublishOnly.
+      - name: Build
+        run: |
+          npm ci
+          npm run build
+
+      # Trusted publishing (OIDC): no npm token.
+      - name: Publish @weareikko/changelog
+        uses: JS-DevTools/npm-publish@0fd2f4369c5d6bcfcde6091a7c527d810b9b5c3f # v4.1.5
+        with:
+          access: public
+          provenance: true
+          tag: ${{ env.DIST_TAG }}
+
+      - name: Create GitHub Release
+        uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1
+        with:
+          tag: ${{ env.VERSION }}
+          name: ${{ env.VERSION }}
+          body: ${{ needs.release.outputs.notes }}
+          prerelease: ${{ env.PRERELEASE }}
+          # GitHub's latest release follows the `latest` dist-tag on npm.
+          makeLatest: ${{ env.PRERELEASE != 'true' }}
+          allowUpdates: true
+
+      # The action of the released tag runs the package that was just published.
+      - name: Check the published package with the action
+        uses: ./
+        with:
+          command: check

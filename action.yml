@@ -25,8 +25,12 @@ inputs:
     description: 'Logins, one per line or comma-separated. `check` on a pull request: their pull requests need no fragment. `release`: their pull requests merged since the previous tag become `Dependencies` entries.'
     required: false
     default: 'renovate[bot]'
+  locale:
+    description: 'Section names: `en` (`Added`, `Changed`, …, `Dependencies`) or `fr` (`Ajouté`, `Modifié`, …, `Dépendances`).'
+    required: false
+    default: 'en'
   github-token:
-    description: 'Token for the GitHub API: pull request files (`check`), and the pull request of each fragment and each commit since the previous tag (`release`).'
+    description: 'Token for the GitHub API: `release` finds the pull request of each fragment and of each commit since the previous tag.'
     required: false
     default: ${{ github.token }}
 
@@ -46,29 +50,38 @@ runs:
       with:
         node-version: '24'
 
+    # The action runs the npm package at the version of its own package.json,
+    # so an action pinned to a commit runs the CLI of that commit.
     - name: Run changelog ${{ inputs.command }}
       id: run
       shell: bash
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
         CHANGELOG_COMMAND: ${{ inputs.command }}
-        CHANGELOG_VERSION: ${{ inputs.version }}
+        CHANGELOG_RELEASE_VERSION: ${{ inputs.version }}
         CHANGELOG_REQUIRE_PATHS: ${{ inputs.require-paths }}
         CHANGELOG_SKIP_LABEL: ${{ inputs.skip-label }}
         CHANGELOG_SKIP_AUTHORS: ${{ inputs.skip-authors }}
+        CHANGELOG_LOCALE: ${{ inputs.locale }}
       run: |
+        set -euo pipefail
+        PACKAGE_VERSION="$(node -p 'require(process.env.GITHUB_ACTION_PATH + "/package.json").version')"
+        # `--prefix` keeps npx away from the package.json of the working
+        # directory: in a clone of this repository at that version, npx
+        # otherwise runs the bin of the root project, which is not linked.
+        changelog() { npx --yes --prefix "$RUNNER_TEMP" "@weareikko/changelog@$PACKAGE_VERSION" "$@"; }
         case "$CHANGELOG_COMMAND" in
           check)
-            node "$GITHUB_ACTION_PATH/cli.mjs" check \
-              --require-paths "$CHANGELOG_REQUIRE_PATHS" \
-              --skip-label "$CHANGELOG_SKIP_LABEL" \
-              --skip-authors "$CHANGELOG_SKIP_AUTHORS"
+            # `check` lists the files of the pull request with `git diff <base>...HEAD`:
+            # complete a shallow checkout (the default of actions/checkout) first.
+            if [[ -n $CHANGELOG_REQUIRE_PATHS && $GITHUB_EVENT_NAME == pull_request* ]] \
+              && [[ "$(git rev-parse --is-shallow-repository)" == true ]]; then
+              git fetch --no-tags --quiet --unshallow origin
+            fi
+            changelog check
             ;;
           release)
-            node "$GITHUB_ACTION_PATH/cli.mjs" release \
-              --version "$CHANGELOG_VERSION" \
-              --skip-label "$CHANGELOG_SKIP_LABEL" \
-              --skip-authors "$CHANGELOG_SKIP_AUTHORS"
+            changelog release --version "$CHANGELOG_RELEASE_VERSION"
             ;;
           *)
             echo "::error::Unknown command \"$CHANGELOG_COMMAND\". Use check or release."
