@@ -1,7 +1,7 @@
 import { matchesGlob } from 'node:path';
 import { FRAGMENTS_DIRECTORY, isFragmentPath, parseFragment } from './changelog.js';
 import type { Config } from './config.js';
-import { readFragments } from './fragments.js';
+import { readFragments, readPrerelease } from './fragments.js';
 import { listChangedFiles } from './git.js';
 import {
   type CheckIssue,
@@ -60,7 +60,7 @@ async function findMissingFragment(
 }
 
 /**
- * Validate every fragment. With `requirePaths`, also fail when the open pull
+ * Validate every fragment and the prerelease file. With `requirePaths`, also fail when the open pull
  * or merge request of the run changes a matching file without adding or
  * editing a fragment, unless it has the skip label or its author is in
  * `skipAuthors`. Returns the exit code.
@@ -74,6 +74,12 @@ export async function check(config: Config, platform: Platform, runtime: Runtime
     })),
   );
   if (issues.length === 0) runtime.stdout(`${fragments.length} fragment(s) valid.`);
+
+  const prerelease = readPrerelease(runtime.cwd);
+  issues.push(
+    ...prerelease.errors.map((error) => ({ ...error, check: 'changelog-prerelease' as const })),
+  );
+  if (prerelease.id) runtime.stdout(`Prerelease "${prerelease.id}": releases are prereleases.`);
 
   if (config.requirePaths.length > 0) {
     const missing = await findMissingFragment(config, platform, runtime);

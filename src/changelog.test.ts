@@ -8,6 +8,7 @@ import {
   isBreakingEntry,
   isFragmentPath,
   parseFragment,
+  parsePrerelease,
   SECTIONS,
   titleToEntry,
 } from './changelog.js';
@@ -364,6 +365,39 @@ describe('buildRelease', () => {
     assert.equal(result.body, null);
     assert.equal(result.errors.length, 1);
     assert.equal(result.errors[0].file, 'b.md');
+  });
+});
+
+describe('parsePrerelease', () => {
+  const file = '.changelog/prerelease';
+
+  it('reads one identifier, with or without a final newline', () => {
+    for (const text of ['rc', 'rc\n', 'rc\r\n\n', ' beta-2 \n', 'alpha1']) {
+      assert.deepEqual(parsePrerelease(text, file).errors, [], text);
+    }
+    assert.equal(parsePrerelease(' beta-2 \n', file).id, 'beta-2');
+  });
+
+  it('rejects an empty file, several lines and invalid identifiers', () => {
+    assert.deepEqual(parsePrerelease('\n', file), {
+      id: null,
+      errors: [
+        {
+          file,
+          line: 1,
+          message:
+            'The prerelease file is empty. Write the prerelease identifier (alpha, beta, rc).',
+        },
+      ],
+    });
+    assert.equal(parsePrerelease('rc\nbeta\n', file).errors[0].line, 2);
+    for (const text of ['12', 'rc.1', 'release candidate', 'bêta']) {
+      assert.match(
+        parsePrerelease(text, file).errors[0].message,
+        /is not a valid prerelease identifier/,
+        text,
+      );
+    }
   });
 });
 

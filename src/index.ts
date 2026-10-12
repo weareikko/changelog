@@ -12,7 +12,10 @@ export {
   isFragmentPath,
   LOCALES,
   parseFragment,
+  parsePrerelease,
+  PRERELEASE_FILE,
   SECTIONS,
+  STABLE_RELEASE,
   titleToEntry,
 } from './changelog.js';
 export type {

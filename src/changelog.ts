@@ -5,6 +5,18 @@
 export const FRAGMENTS_DIRECTORY = '.changelog';
 
 /**
+ * The file that turns `--version auto` into prereleases. It holds the
+ * prerelease identifier (`alpha`, `beta`, `rc`). It is not a fragment.
+ */
+export const PRERELEASE_FILE = `${FRAGMENTS_DIRECTORY}/prerelease`;
+
+/** The body of a stable release that promotes a prerelease without new entries. */
+export const STABLE_RELEASE = {
+  en: (prerelease: string) => `Stable release of ${prerelease}.`,
+  fr: (prerelease: string) => `Version stable de ${prerelease}.`,
+} as const;
+
+/**
  * Keep a Changelog sections by locale, in the order a release renders them.
  * The first one (`Added`) holds new features. The last one gets the pull
  * requests without fragment (dependency updates).
@@ -173,6 +185,41 @@ export function parseFragment(
   }
 
   return { sections: found, links, errors };
+}
+
+/**
+ * Parse the prerelease file: one line with a semantic version prerelease
+ * identifier (letters, digits and hyphens, not only digits).
+ */
+export function parsePrerelease(
+  text: string,
+  file: string,
+): { id: string | null; errors: FileIssue[] } {
+  const lines = text.replace(/(\r?\n)+$/, '').split(/\r?\n/);
+  const id = lines[0].trim();
+  const issue = (line: number, message: string) => ({
+    id: null,
+    errors: [{ file, line, message }],
+  });
+  if (lines.length > 1) {
+    return issue(
+      2,
+      'The prerelease file has more than one line. Write only the prerelease identifier.',
+    );
+  }
+  if (id === '') {
+    return issue(
+      1,
+      'The prerelease file is empty. Write the prerelease identifier (alpha, beta, rc).',
+    );
+  }
+  if (!/^[0-9A-Za-z-]+$/.test(id) || /^\d+$/.test(id)) {
+    return issue(
+      1,
+      `"${id}" is not a valid prerelease identifier. Use letters, digits and hyphens, not only digits (alpha, beta, rc).`,
+    );
+  }
+  return { id, errors: [] };
 }
 
 /**

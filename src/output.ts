@@ -16,7 +16,7 @@ export interface Runtime {
 
 /** An issue with the Code Quality check it belongs to. */
 export interface CheckIssue extends FileIssue {
-  check: 'changelog-fragment' | 'changelog-missing-fragment';
+  check: 'changelog-fragment' | 'changelog-missing-fragment' | 'changelog-prerelease';
 }
 
 function escapeAnnotation(message: string): string {

@@ -1,6 +1,12 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { FRAGMENTS_DIRECTORY, isFragmentPath } from './changelog.js';
+import {
+  type FileIssue,
+  FRAGMENTS_DIRECTORY,
+  isFragmentPath,
+  parsePrerelease,
+  PRERELEASE_FILE,
+} from './changelog.js';
 import { ConfigError } from './errors.js';
 
 export interface FragmentFile {
@@ -23,4 +29,14 @@ export function readFragments(cwd: string): FragmentFile[] {
     .filter(isFragmentPath)
     .toSorted()
     .map((file) => ({ file, text: readFileSync(join(cwd, file), 'utf8') }));
+}
+
+/**
+ * The prerelease identifier of `.changelog/prerelease`, or null without the
+ * file, with the errors of an invalid file.
+ */
+export function readPrerelease(cwd: string): { id: string | null; errors: FileIssue[] } {
+  const path = join(cwd, PRERELEASE_FILE);
+  if (!existsSync(path)) return { id: null, errors: [] };
+  return parsePrerelease(readFileSync(path, 'utf8'), PRERELEASE_FILE);
 }

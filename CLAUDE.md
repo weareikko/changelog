@@ -23,7 +23,7 @@
 - `src/platform.ts`: the `Platform` interface and `createPlatform()`. `src/platforms/github.ts` and `src/platforms/gitlab.ts` implement it.
 - `src/gitlab.ts`, `src/github.ts`: explicit REST clients with an injectable `fetch`, typed errors and access hints.
 - `src/git.ts`: `git` runner (`Git` type, injectable) and the history helpers.
-- `src/version.ts`: `--version auto`: the previous version tag (highest semantic version reachable from HEAD) and the next version (`semver`).
+- `src/version.ts`: `--version auto`: the previous version tag (highest semantic version reachable from HEAD), the latest stable version, and the next version (`semver`), with the prerelease rules of `.changelog/prerelease`.
 - `src/check.ts`, `src/release.ts`: the two commands. `src/fragments.ts` reads `.changelog/`. `src/output.ts`: annotations, Code Quality report, dotenv, `GITHUB_OUTPUT`, and the `Runtime` type (cwd, env, fetch, git, stdout, stderr).
 - `src/cli.ts`: `main(argv, runtime)`, help and version. `bin/changelog.js` imports `dist/cli.js`.
 - `src/index.ts`: library exports.
@@ -49,6 +49,7 @@
 - **Never edit `CHANGELOG.md` directly.** Each pull request adds a fragment `.changelog/<slug>.md` (slug = branch name without its prefix). A fragment only contains `### Added|Changed|Deprecated|Removed|Fixed|Security|Dependencies` headings with their entries. Do not write the pull request number.
 - The `Changelog` CI job fails when a pull request changes `src/**`, `bin/**` or `action.yml` without a fragment; set the `no-changelog` label for changes users do not see.
 - Each merge into `main` releases with the `Release` workflow (`publish.yml`): `release --version auto` gives the version from the fragments, and no fragment means no release. Run it by hand for another bump: `gh workflow run publish.yml -f bump=major` (or `minor`, `patch`, the `pre*` bumps). Do not tag or publish by hand. Tags have no `v` prefix.
+- Prereleases: a pull request adds `.changelog/prerelease` (one line: `alpha`, `beta` or `rc`), each merge then releases the next prerelease, and the pull request that deletes the file releases the stable version. Never delete or edit it outside of such a pull request.
 - Mark a breaking entry with `Breaking: `, `**Breaking:** `, `**Breaking**: ` or `⚠️ ` (after the package prefix, if any): from 1.0.0 it gives a major version.
 - npm trusted publishing is bound to `publish.yml`: keep the release and publish jobs in that file.
 - The CI and the release run the local build (`node bin/changelog.js`), because the action runs the published package at the version of `package.json`.

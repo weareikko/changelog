@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readFragments } from './fragments.js';
+import { readFragments, readPrerelease } from './fragments.js';
 import { makeDirectory } from './test-utils.js';
 
 describe('readFragments', () => {
@@ -19,5 +19,26 @@ describe('readFragments', () => {
 
   it('asks for a .changelog/ directory', () => {
     expect(() => readFragments(makeDirectory())).toThrow('No .changelog/ directory.');
+  });
+});
+
+describe('readPrerelease', () => {
+  it('reads the identifier of .changelog/prerelease', () => {
+    expect(readPrerelease(makeDirectory({ '.changelog/prerelease': 'beta\n' }))).toEqual({
+      id: 'beta',
+      errors: [],
+    });
+  });
+
+  it('returns no identifier without the file', () => {
+    expect(readPrerelease(makeDirectory({ '.changelog/.gitkeep': '' }))).toEqual({
+      id: null,
+      errors: [],
+    });
+  });
+
+  it('is not a fragment', () => {
+    const cwd = makeDirectory({ '.changelog/prerelease': 'rc\n' });
+    expect(readFragments(cwd)).toEqual([]);
   });
 });
