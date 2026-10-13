@@ -310,6 +310,26 @@ describe('release', () => {
     );
   });
 
+  it('bumps the current version with --version patch, minor or major', async () => {
+    const { runtime, read, code } = run(['--version', 'major', '--dotenv', 'release.env'], {
+      files: { '.changelog/a.md': '### Fixed\n- Fix\n' },
+      git: tableGit({ [added('.changelog/a.md')]: '', 'tag --merged HEAD': '1\n1.1.0\n' }),
+    });
+    expect(await code).toBe(0);
+    expect(runtime.out[0]).toBe('Version 2.0.0: major bump since 1.1.0.');
+    expect(read('CHANGELOG.md')).toContain('## 2.0.0 - 2026-10-12\n\n### Fixed\n\n- Fix\n');
+    expect(read('release.env')).toBe('CHANGELOG_CHANGED=true\nCHANGELOG_VERSION=2.0.0\n');
+  });
+
+  it('writes an empty version when a bump has nothing to release', async () => {
+    const { read, code } = run(['--version', 'minor', '--skip-authors', ''], {
+      git: tableGit({ 'tag --merged HEAD': '1.0.0\n' }),
+    });
+    expect(await code).toBe(0);
+    expect(read('CHANGELOG.md')).toBe(CHANGELOG);
+    expect(read('github-output')).toMatch(/\nversion<<(\S+)\n\n\1\n/);
+  });
+
   it('writes an empty version when --version auto has nothing to release', async () => {
     const { read, code } = run(
       ['--version', 'auto', '--dotenv', 'release.env', '--skip-authors', ''],

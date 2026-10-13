@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { LOCALES, SECTIONS, type Locale } from './changelog.js';
 import { ConfigError } from './errors.js';
-import { AUTO_VERSION } from './version.js';
+import { isComputedVersion } from './version.js';
 
 export const COMMANDS = ['check', 'release'] as const;
 export type Command = (typeof COMMANDS)[number];
@@ -84,9 +84,12 @@ export interface Config {
   requirePaths: string[];
   skipLabel: string;
   skipAuthors: string[];
-  /** The version heading, or `auto` to compute it from the entries. */
+  /**
+   * The version heading, `auto` to compute it from the entries, or `patch`,
+   * `minor`, `major` to bump the current version.
+   */
   version: string;
-  /** For `--version auto`: the version to bump. Empty: the latest tag. */
+  /** For `--version auto` or a bump: the version to bump. Empty: the latest tag. */
   current: string;
   date: string;
   dotenv: string;
@@ -339,11 +342,11 @@ export function resolveConfig(
 
   if (command === 'release' && !config.version) {
     throw new ConfigError('Missing --version.', {
-      hint: 'Pass the version heading, e.g. "changelog release --version 1.2.0", or "--version auto".',
+      hint: 'Pass the version heading, e.g. "changelog release --version 1.2.0", "--version auto" or "--version minor".',
     });
   }
-  if (values.current && config.version !== AUTO_VERSION) {
-    throw new ConfigError('--current only applies to "--version auto".');
+  if (values.current && !isComputedVersion(config.version)) {
+    throw new ConfigError('--current only applies to "--version auto", patch, minor or major.');
   }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(config.date)) {
     throw new ConfigError(`Invalid --date "${config.date}".`, { hint: 'Use YYYY-MM-DD.' });
