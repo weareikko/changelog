@@ -130,7 +130,8 @@ runs:
         MOVING_TAGS: ${{ inputs.moving-tags }}
       run: |
         set -euo pipefail
-        if [[ -f package.json ]]; then
+        # A package.json without a version (tooling only) keeps its form.
+        if [[ -f package.json ]] && node -e 'process.exit(require("./package.json").version ? 0 : 1)'; then
           WORKSPACES=()
           if node -e 'process.exit(require("./package.json").workspaces ? 0 : 1)'; then
             WORKSPACES=(--workspaces --include-workspace-root)
