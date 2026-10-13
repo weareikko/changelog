@@ -1,19 +1,44 @@
 import { describe, expect, it } from 'vitest';
 import type { ChangeLevel } from './changelog.js';
 import { tableGit } from './test-utils.js';
-import { findVersionTag, nextVersion, resolveVersions } from './version.js';
+import { type Bump, findVersionTag, nextVersion, resolveVersions } from './version.js';
 
 /** The next version of `current` (stable `stable`) with this prerelease file. */
 function next(
   current: string,
   change: ChangeLevel | null,
-  options: { stable?: string; preid?: string } = {},
+  options: { stable?: string; preid?: string; bump?: Bump } = {},
 ) {
   const stable = options.stable ?? current;
-  return nextVersion({ current, stable, preid: options.preid ?? null }, change);
+  return nextVersion(
+    { current, stable, preid: options.preid ?? null },
+    change,
+    options.bump ?? null,
+  );
 }
 
 describe('nextVersion', () => {
+  describe('with a bump', () => {
+    it('replaces the bump of the entries', () => {
+      expect(next('0.4.7', 'fix', { bump: 'major' })?.version).toBe('1.0.0');
+      expect(next('1.4.2', 'breaking', { bump: 'patch' })?.version).toBe('1.4.3');
+      expect(next('1.1.0', 'fix', { bump: 'minor', preid: 'rc' })?.version).toBe('1.2.0-rc.0');
+    });
+
+    it('releases nothing on a stable version without entries', () => {
+      expect(next('1.4.2', null, { bump: 'minor' })).toBeNull();
+    });
+
+    it('promotes a prerelease to the bump of the stable version or to its base', () => {
+      const rc = { stable: '1.1.0' };
+      expect(next('1.2.0-rc.1', null, { ...rc, bump: 'major' })).toEqual({
+        version: '2.0.0',
+        promotes: '1.2.0-rc.1',
+      });
+      expect(next('1.2.0-rc.1', null, { ...rc, bump: 'patch' })?.version).toBe('1.2.0');
+    });
+  });
+
   describe('stable version, no prerelease file', () => {
     it('bumps major, minor or patch from 1.0.0', () => {
       expect(next('1.4.2', 'breaking')?.version).toBe('2.0.0');

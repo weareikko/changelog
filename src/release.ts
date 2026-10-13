@@ -24,7 +24,14 @@ import {
   writeOutputFile,
 } from './output.js';
 import type { Platform } from './platform.js';
-import { AUTO_VERSION, findVersionTag, nextVersion, resolveVersions } from './version.js';
+import {
+  type Bump,
+  findVersionTag,
+  isBump,
+  isComputedVersion,
+  nextVersion,
+  resolveVersions,
+} from './version.js';
 
 interface DatedFragment extends ReleaseFragment {
   time: number;
@@ -83,7 +90,7 @@ async function listAuthorChanges(
 
 /**
  * `version` is the released version: the given one, or with `--version auto`
- * the computed one (empty when there is nothing to release).
+ * or a bump the computed one (empty when there is nothing to release).
  */
 function writeOutputs(config: Config, runtime: Runtime, version: string, body: string): void {
   const changed = String(body !== '');
@@ -99,22 +106,23 @@ function writeOutputs(config: Config, runtime: Runtime, version: string, body: s
 }
 
 /**
- * The version and body of an `--version auto` release, or null when there is
- * nothing to release. A stable release that promotes a prerelease without
- * new entries gets a one-line body.
+ * The version and body of an `--version auto` or bump release, or null when
+ * there is nothing to release. A stable release that promotes a prerelease
+ * without new entries gets a one-line body.
  */
-async function autoRelease(
+async function computedRelease(
   config: Config,
   runtime: Runtime,
   preid: string | null,
   built: { body: string | null; change: ChangeLevel | null },
 ): Promise<{ version: string; body: string } | null> {
+  const bump: Bump | null = isBump(config.version) ? config.version : null;
   const versions = await resolveVersions(config.current, runtime.git);
-  const next = nextVersion({ ...versions, preid }, built.change);
+  const next = nextVersion({ ...versions, preid }, built.change, bump);
   if (!next) return null;
   const reason = next.promotes
     ? `stable release of ${next.promotes}`
-    : `${built.change} change since ${versions.current}`;
+    : `${bump ?? built.change} ${bump ? 'bump' : 'change'} since ${versions.current}`;
   runtime.stdout(`Version ${next.version}: ${reason}${preid ? ` (prerelease "${preid}")` : ''}.`);
   return {
     version: next.version,
@@ -125,8 +133,8 @@ async function autoRelease(
 /**
  * Fold the fragments, and the changes of `skipAuthors` merged since the
  * previous tag, into a new CHANGELOG.md section, and delete the fragments.
- * With `--version auto`, the entries and `.changelog/prerelease` give the
- * next version. Returns the exit code.
+ * With `--version auto` (or a bump), the entries (or the bump) and
+ * `.changelog/prerelease` give the next version. Returns the exit code.
  */
 export async function release(
   config: Config,
@@ -140,8 +148,8 @@ export async function release(
     );
   }
 
-  const auto = config.version === AUTO_VERSION;
-  const prerelease = auto ? readPrerelease(runtime.cwd) : { id: null, errors: [] };
+  const computed = isComputedVersion(config.version);
+  const prerelease = computed ? readPrerelease(runtime.cwd) : { id: null, errors: [] };
   if (prerelease.errors.length > 0) {
     reportIssues(runtime, prerelease.errors);
     runtime.stderr(
@@ -165,8 +173,8 @@ export async function release(
     return 1;
   }
 
-  const next = auto
-    ? await autoRelease(config, runtime, prerelease.id, { body, change })
+  const next = computed
+    ? await computedRelease(config, runtime, prerelease.id, { body, change })
     : body === null
       ? null
       : { version: config.version, body };
@@ -174,7 +182,7 @@ export async function release(
     runtime.stdout(
       `No fragment in ${FRAGMENTS_DIRECTORY}/ and no ${platform.noun} from skip-authors: CHANGELOG.md is unchanged.`,
     );
-    writeOutputs(config, runtime, auto ? '' : config.version, '');
+    writeOutputs(config, runtime, computed ? '' : config.version, '');
     return 0;
   }
 

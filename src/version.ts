@@ -6,6 +6,20 @@ import { listTags, type Git } from './git.js';
 /** The `--version` value that computes the next version from the entries. */
 export const AUTO_VERSION = 'auto';
 
+/** The `--version` values that bump the current version by a fixed level. */
+export const BUMPS = ['patch', 'minor', 'major'] as const;
+
+export type Bump = (typeof BUMPS)[number];
+
+export function isBump(version: string): version is Bump {
+  return (BUMPS as readonly string[]).includes(version);
+}
+
+/** `--version auto` or a bump: the version comes from the tags and the entries. */
+export function isComputedVersion(version: string): boolean {
+  return version === AUTO_VERSION || isBump(version);
+}
+
 export interface VersionState {
   /** The version to bump: a stable version or a prerelease. */
   current: string;
@@ -54,7 +68,8 @@ function inc(version: SemVer | string, type: ReleaseType, preid?: string): strin
 
 /**
  * The next version, or null when there is nothing to release. `change` is
- * the kind of change of the entries, or null without entries.
+ * the kind of change of the entries, or null without entries. `bump`, when
+ * given, replaces the bump of {@link releaseType}.
  *
  * - Stable, no prerelease file: the bump of {@link releaseType}.
  * - Stable, prerelease file: the first prerelease of that bump (`1.1.0` →
@@ -70,15 +85,18 @@ function inc(version: SemVer | string, type: ReleaseType, preid?: string): strin
 export function nextVersion(
   { current, stable, preid }: VersionState,
   change: ChangeLevel | null,
+  bump: Bump | null = null,
 ): NextVersion | null {
   const version = parse(current);
   const base = `${version.major}.${version.minor}.${version.patch}`;
   const latest = parse(stable);
-  const target = change ? inc(latest, releaseType(latest, change)) : base;
+  const typeOf = (from: SemVer) => bump ?? (change ? releaseType(from, change) : null);
+  const latestType = typeOf(latest);
+  const target = latestType ? inc(latest, latestType) : base;
 
   if (version.prerelease.length === 0) {
     if (!change) return null;
-    const type = releaseType(version, change);
+    const type = typeOf(version)!;
     return {
       version: preid ? inc(version, `pre${type}`, preid) : inc(version, type),
       promotes: null,

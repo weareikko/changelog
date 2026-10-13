@@ -80,11 +80,11 @@ For each fragment, `release` finds the commit that added it (`git log --diff-fil
 
 The previous tag is the tag reachable from `HEAD` with the highest semantic version (`1.2.0` or `v1.2.0`). Other tags do not count, for example a moving major tag (`1`) or `latest`.
 
-`release` needs the full history: check out with `fetch-depth: 0` on GitHub and set `GIT_DEPTH: 0` on GitLab.
+`release` needs the full history and the tags: the action fetches them on GitHub; set `GIT_DEPTH: 0` on GitLab.
 
 ### Automatic version
 
-`release --version auto` gets the next version from the entries that it folds (the fragments and the entries of `--skip-authors`). It bumps the current version: `--current <version>` (or `CHANGELOG_CURRENT_VERSION`), else the version of the previous tag, else `0.0.0`.
+`release --version auto` gets the next version from the entries that it folds (the fragments and the entries of `--skip-authors`). It bumps the current version: `--current <version>` (or `CHANGELOG_CURRENT_VERSION`), else the version of the previous tag, else `0.0.0`. `--version patch`, `minor` or `major` forces that bump instead, for example `--version major` for 1.0.0 after 0.x.
 
 | Entries                                              | From 1.0.0 | On 0.x |
 | ---------------------------------------------------- | ---------- | ------ |
@@ -92,7 +92,7 @@ The previous tag is the tag reachable from `HEAD` with the highest semantic vers
 | An entry under `Added` (`Ajouté`), no breaking entry | minor      | patch  |
 | Other entries only (fixes, `Dependencies`)           | patch      | patch  |
 
-The `.changelog/prerelease` file turns these versions into prereleases: see [Prereleases](#prereleases). To release a major version without a breaking entry, pass the version with `--version`.
+The `.changelog/prerelease` file turns these versions into prereleases: see [Prereleases](#prereleases). To release a major version without a breaking entry, use `--version major`.
 
 A breaking entry starts with one of these markers, in any case, after an optional package prefix (`**CLI**: ` or `**@scope/pkg:** `):
 
@@ -104,7 +104,7 @@ A breaking entry starts with one of these markers, in any case, after an optiona
 - **CLI**: Breaking: Remove the `--foo` option
 ```
 
-When there is nothing to release, `release --version auto` changes no file, writes `changed=false` and an empty `version`, and exits with 0.
+When there is nothing to release, `release --version auto` (or a bump) changes no file, writes `changed=false` and an empty `version`, and exits with 0.
 
 ### Prereleases
 
@@ -122,17 +122,17 @@ The file `.changelog/prerelease` holds one line: the prerelease identifier, for 
 
 With the file and without entries, nothing is released. The new identifier must sort after the current one (`alpha` < `beta` < `rc`), or `release` fails.
 
-The flow on GitHub with the [Release](#release) workflow:
+The flow with the [release workflow](#release-1) on GitHub:
 
 1. **Enter:** a pull request adds `.changelog/prerelease` (`rc`). The next merge with entries releases `1.2.0-rc.0`.
 2. **During:** each merge with entries releases the next prerelease. A pull request that changes the file (`beta` to `rc`) starts the new identifier at 0.
 3. **Exit:** a pull request deletes `.changelog/prerelease`. Its merge releases the stable version, with or without new entries.
 
-A manual run of the workflow with an explicit bump (`bump=preminor`, `bump=minor`, …) still works and ignores the file.
+`--version patch`, `minor` or `major` with the file gives the first prerelease of that bump (`1.1.0` with `minor` and `rc`: `1.2.0-rc.0`), or the stable version without the file.
 
 Without API access (for example on your computer without a token), `release` warns, adds no reference and no entry from `--skip-authors`, and still folds the fragments.
 
-The tool only edits files. Writing the version in your package files, committing, tagging and publishing stay in your pipeline.
+The CLI only edits files. Writing the version in your package files, committing, tagging and publishing stay in your pipeline, or in the [GitHub Action](#release-1).
 
 ## Options
 
@@ -140,8 +140,8 @@ The tool only edits files. Writing the version in your package files, committing
 | --------------------------- | --------- | ------------------------------------------------ | --------------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | `--require-paths <globs>`   | `check`   | none                                             | `CHANGELOG_REQUIRE_PATHS`   | Globs, one per line or comma-separated. Matching changes require a fragment.                                     |
 | `--codequality <file>`      | `check`   | none                                             |                             | Write a [GitLab Code Quality report](#gitlab-ci) of the errors.                                                  |
-| `--version <version\|auto>` | `release` | required                                         |                             | Version heading, or `auto`: see [Automatic version](#automatic-version).                                         |
-| `--current <version>`       | `release` | the previous tag, else `0.0.0`                   | `CHANGELOG_CURRENT_VERSION` | With `--version auto`: the version to bump.                                                                      |
+| `--version <version\|auto>` | `release` | required                                         |                             | Version heading, `auto` or `patch`, `minor`, `major`: see [Automatic version](#automatic-version).               |
+| `--current <version>`       | `release` | the previous tag, else `0.0.0`                   | `CHANGELOG_CURRENT_VERSION` | With `--version auto` or a bump: the version to bump.                                                            |
 | `--date <YYYY-MM-DD>`       | `release` | today                                            |                             | Date of the version heading.                                                                                     |
 | `--notes-file <file>`       | `release` | none                                             |                             | Write the new section without its heading (empty when nothing changed).                                          |
 | `--dotenv <file>`           | `release` | none                                             |                             | Write `CHANGELOG_CHANGED=true\|false` and `CHANGELOG_VERSION=<version>` (the released version).                  |
@@ -159,7 +159,7 @@ Flags win over environment variables. `changelog --help` shows the options and `
 
 Outputs:
 
-- `release` appends `changed` (`true` or `false`), `version` (the released version: the given one, or the computed one with `--version auto`, empty when there is nothing to release) and `body` (the new section without its heading) to `GITHUB_OUTPUT` when it is set (GitHub Actions).
+- `release` appends `changed` (`true` or `false`), `version` (the released version: the given one, or the computed one with `--version auto` or a bump, empty when there is nothing to release) and `body` (the new section without its heading) to `GITHUB_OUTPUT` when it is set (GitHub Actions).
 - `--notes-file` and `--dotenv` work on both platforms.
 - `check` prints errors as `::error file=…,line=…::` annotations in GitHub Actions, and as `file:line: message` lines elsewhere.
 
@@ -182,7 +182,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: weareikko/changelog@1
+      - uses: weareikko/changelog@0
         with:
           command: check
           require-paths: |
@@ -193,50 +193,104 @@ The `labeled` and `unlabeled` types run the check again when a label changes. `c
 
 ### Release
 
+Each merge into `main` releases what its fragments describe. In `.github/workflows/publish.yml` of an npm package:
+
 ```yaml
-- uses: actions/checkout@v5
-  with:
-    fetch-depth: 0 # release reads the commit that added each fragment, and the tags
+name: Release
 
-- id: changelog
-  uses: weareikko/changelog@1
-  with:
-    command: release
-    version: ${{ steps.version.outputs.version }}
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        type: choice
+        options: [auto, patch, minor, major]
+        default: auto
 
-- env:
-    VERSION: ${{ steps.version.outputs.version }}
-  run: |
-    git add CHANGELOG.md .changelog
-    git commit -m "Release $VERSION"
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: write # commit, tag, push and the GitHub release
+      pull-requests: read # the pull request of each fragment
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      dist-tag: ${{ steps.release.outputs.dist-tag }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: release
+        uses: weareikko/changelog@0
+        with:
+          command: release
+          version: ${{ inputs.version || 'auto' }}
+
+  publish:
+    needs: release
+    if: needs.release.outputs.version != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm trusted publishing
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: refs/tags/${{ needs.release.outputs.version }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+      - run: npm ci && npm run build
+      - run: npm publish --provenance --access public --tag "$DIST_TAG"
+        env:
+          DIST_TAG: ${{ needs.release.outputs.dist-tag }}
 ```
 
-Pass expressions to `run:` through `env:`, never inline, to prevent shell injection. `release` reads the pull requests with `github-token`: the job needs `contents: read` and `pull-requests: read`.
+`release` on GitHub:
+
+1. stops when the branch has moved on since the run started: the run of the newer commit releases,
+2. fetches the history and the tags, and folds the fragments with the [automatic version](#automatic-version) (or the given bump or version); without entries, it stops and `version` is empty,
+3. sets the version of `package.json` with `npm version`, when there is one (with `--workspaces --include-workspace-root` when it has `workspaces`),
+4. commits `commit-message`, tags the version and pushes them to the branch,
+5. with `moving-tags: true`, moves the major (`1`) and minor (`1.2`) tags to a stable version,
+6. creates the GitHub release, marked as a prerelease for a prerelease, with a link to `CHANGELOG.md` as its body.
+
+A tag pushed with `GITHUB_TOKEN` starts no workflow, so publish in a job that `needs` the release job. The release commit starts no new run either. A repository without a package (for example a Composer package) only needs the `release` job.
 
 ### Inputs
 
-| Input           | Default               | Description                                                                                                                                           |
-| --------------- | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `command`       | required              | `check` or `release`.                                                                                                                                 |
-| `version`       | none                  | `release`: version heading, written as given, or `auto`.                                                                                              |
-| `current`       | none                  | `release` with `version: auto`: the version to bump. Default: the previous tag, else `0.0.0`.                                                         |
-| `require-paths` | none                  | `check`: globs, one per line or comma-separated. Matching changes require a fragment.                                                                 |
-| `skip-label`    | `no-changelog`        | `check`: label that lifts the fragment requirement. `release`: a pull request from `skip-authors` with this label gets no entry.                      |
-| `skip-authors`  | `renovate[bot]`       | Logins, one per line or comma-separated. `check`: their pull requests need no fragment. `release`: their pull requests become `Dependencies` entries. |
-| `locale`        | `en`                  | Section names: `en` or `fr`.                                                                                                                          |
-| `github-token`  | `${{ github.token }}` | `release`: finds the pull request of each fragment and of each commit since the previous tag.                                                         |
+| Input            | Default               | Description                                                                                                                                           |
+| ---------------- | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `command`        | required              | `check` or `release`.                                                                                                                                 |
+| `version`        | `auto`                | `release`: `auto`, `patch`, `minor`, `major`, or a version written as given.                                                                          |
+| `commit-message` | `Release {version}`   | `release`: message of the release commit. `{version}` is replaced by the version.                                                                     |
+| `moving-tags`    | `false`               | `release`: `true` moves the major and minor tags to each stable version, for a repository that is a GitHub Action.                                    |
+| `require-paths`  | none                  | `check`: globs, one per line or comma-separated. Matching changes require a fragment.                                                                 |
+| `skip-label`     | `no-changelog`        | `check`: label that lifts the fragment requirement. `release`: a pull request from `skip-authors` with this label gets no entry.                      |
+| `skip-authors`   | `renovate[bot]`       | Logins, one per line or comma-separated. `check`: their pull requests need no fragment. `release`: their pull requests become `Dependencies` entries. |
+| `locale`         | `en`                  | Section names: `en` or `fr`.                                                                                                                          |
+| `github-token`   | `${{ github.token }}` | `release`: finds the pull request of each fragment and of each commit since the previous tag, and creates the GitHub release.                         |
 
 ### Outputs
 
-| Output    | Description                                                                          |
-| --------- | ------------------------------------------------------------------------------------ |
-| `changed` | `release`: `true` when `CHANGELOG.md` got a new section.                             |
-| `version` | `release`: the released version (empty with `version: auto` and nothing to release). |
-| `body`    | `release`: the new section without its `##` heading, e.g. for a GitHub Release body. |
+| Output       | Description                                                                           |
+| ------------ | ------------------------------------------------------------------------------------- |
+| `changed`    | `release`: `true` when `CHANGELOG.md` got a new section.                              |
+| `version`    | `release`: the released version and its tag (empty when there is nothing to release). |
+| `body`       | `release`: the new section without its `##` heading.                                  |
+| `prerelease` | `release`: `true` for a prerelease version (with a `-`), else `false`.                |
+| `dist-tag`   | `release`: the npm dist-tag: `next` for a prerelease, else `latest`.                  |
 
 ### Version of the action
 
-The action sets up Node.js 24 (it stays on the `PATH` for the next steps) and runs `npx --yes @weareikko/changelog@<version>`, where `<version>` comes from the `package.json` of the action. An action pinned to a commit SHA (for example by Renovate) therefore runs the CLI of that same release, not the latest one. `@1` follows the latest 1.x release.
+The action sets up Node.js 24 (it stays on the `PATH` for the next steps) and runs `npx --yes @weareikko/changelog@<version>`, where `<version>` comes from the `package.json` of the action. An action pinned to a commit SHA (for example by Renovate) therefore runs the CLI of that same release, not the latest one. `@0` follows the latest 0.x release, breaking changes included: on 0.x, a breaking change gives a minor version.
 
 ## GitLab CI
 
@@ -256,7 +310,7 @@ changelog:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
   script:
-    - npx --yes @weareikko/changelog@1 check --require-paths 'src/**' --skip-authors renovate-bot --codequality gl-code-quality-report.json
+    - npx --yes @weareikko/changelog@0 check --require-paths 'src/**' --skip-authors renovate-bot --codequality gl-code-quality-report.json
   artifacts:
     when: always
     reports:
@@ -272,7 +326,7 @@ changelog:release:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       when: manual
   script:
-    - npx --yes @weareikko/changelog@1 release --version auto --skip-authors renovate-bot --dotenv release.env --notes-file release-notes.md
+    - npx --yes @weareikko/changelog@0 release --version auto --skip-authors renovate-bot --dotenv release.env --notes-file release-notes.md
     - . ./release.env
     - test "$CHANGELOG_CHANGED" = true || { echo "No fragment and no merge request from skip-authors."; exit 1; }
     # Commit CHANGELOG.md and .changelog/, tag "$CHANGELOG_VERSION" and push
@@ -345,25 +399,14 @@ The tests inject `fetch`, `git` and the working directory: they make no network 
 
 ### Release
 
-Each merge into `main` starts the `Release` workflow (`publish.yml`). It folds the fragments with `release --version auto` and releases the [automatic version](#automatic-version). Without a fragment and without a pull request from `renovate[bot]`, it releases nothing. When `main` has moved on since the run started, the run stops and the run of the newer commit releases.
-
-Run it by hand for another bump (a major version without a breaking entry, a prerelease, or the stable version of a prerelease):
+Each merge into `main` starts the `Release` workflow (`publish.yml`), which uses the action of the same commit: see [Release](#release-1) under GitHub Actions. Without a fragment and without a pull request from `renovate[bot]`, it releases nothing. Run it by hand to force a bump, for example a major version without a breaking entry:
 
 ```sh
-gh workflow run publish.yml -f bump=minor
-gh workflow run publish.yml -f bump=preminor -f preid=rc   # 1.1.0-rc.0
-gh workflow run publish.yml -f bump=prerelease -f preid=rc # 1.1.0-rc.1
-gh workflow run publish.yml -f bump=minor                  # 1.1.0 after 1.1.0-rc.1
+gh workflow run publish.yml -f version=major
 ```
 
-For a series of prereleases, use the [prerelease file](#prereleases) instead of manual runs.
+For prereleases, use the [prerelease file](#prereleases).
 
-The workflow:
-
-1. runs `npm run check`, folds `.changelog/` into `CHANGELOG.md` with the CLI built from this commit, and sets the version in `package.json` (`npm version`),
-2. commits `Release <version>`, tags `<version>` (no `v` prefix), moves the major tag (`1`) for a stable version only, and pushes to `main`,
-3. builds and publishes `@weareikko/changelog` to npm with trusted publishing (OIDC, no token) and provenance: a prerelease (a version with a `-`) goes to the `next` dist-tag, any other version to `latest`; a version that npm already has is skipped,
-4. creates the GitHub release, marked as a prerelease and not as the latest release for a prerelease,
-5. runs the action of the new tag, which runs the package that was just published.
+The action runs the CLI version of `package.json`, which is already on npm: new CLI code releases from the next release on. The publish job builds and publishes `@weareikko/changelog` with trusted publishing (OIDC, no token) and provenance, then runs the action of the new tag, which runs the package that was just published.
 
 When the publish job fails, "Re-run failed jobs" publishes what is left. Do not edit `CHANGELOG.md`, `package.json` versions or tags by hand.

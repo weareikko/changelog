@@ -31,4 +31,5 @@ export type {
 } from './changelog.js';
 export { formatCodeQuality, formatDotenv } from './output.js';
 export { nextVersion } from './version.js';
+export type { Bump } from './version.js';
 export type { CheckIssue } from './output.js';

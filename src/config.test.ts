@@ -161,7 +161,10 @@ describe('resolveConfig', () => {
     expect(
       configError(() => resolveConfig(['release', '--version', '1.2.0', '--current', '1.1.0'], {}))
         .message,
-    ).toBe('--current only applies to "--version auto".');
+    ).toBe('--current only applies to "--version auto", patch, minor or major.');
+    expect(
+      resolveConfig(['release', '--version', 'minor', '--current', '1.2.0'], {}),
+    ).toMatchObject({ version: 'minor', current: '1.2.0' });
     expect(configError(() => resolveConfig(['check', '--current', '1.1.0'], {})).message).toBe(
       '--current only applies to "changelog release".',
     );
