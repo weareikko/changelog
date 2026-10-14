@@ -296,7 +296,7 @@ A tag pushed with `GITHUB_TOKEN` starts no workflow, so publish in a job that `n
 
 ### Version of the action
 
-The action sets up Node.js 24 (it stays on the `PATH` for the next steps) and runs `npx --yes @weareikko/changelog@<version>`, where `<version>` comes from the `package.json` of the action. An action pinned to a commit SHA (for example by Renovate) therefore runs the CLI of that same release, not the latest one. `@0` follows the latest 0.x release, breaking changes included: on 0.x, a breaking change gives a minor version.
+The action sets up Node.js 24 (it stays on the `PATH` for the next steps) and runs `npx --yes @weareikko/changelog@<version>`, where `<version>` comes from the `package.json` of the action. An action pinned to a commit SHA (for example by Renovate) therefore runs the CLI of that same release, not the latest one. In a checkout of this repository with a build (`dist/cli.js` exists), `uses: ./` runs that build instead: this repository releases and checks itself with its own code. `@0` follows the latest 0.x release, breaking changes included: on 0.x, a breaking change gives a minor version.
 
 ## GitLab CI
 
@@ -413,6 +413,6 @@ gh workflow run publish.yml -f version=major
 
 For prereleases, use the [prerelease file](#prereleases).
 
-The action runs the CLI version of `package.json`, which is already on npm: new CLI code releases from the next release on. The publish job builds and publishes `@weareikko/changelog` with trusted publishing (OIDC, no token) and provenance, then runs the action of the new tag, which runs the package that was just published.
+The release job builds the package, then runs the action of the same commit, which runs that build: the release uses the code that the test job has just tested. The publish job builds and publishes `@weareikko/changelog` with trusted publishing (OIDC, no token) and provenance.
 
 When the publish job fails, "Re-run failed jobs" publishes what is left. Do not edit `CHANGELOG.md`, `package.json` versions or tags by hand.

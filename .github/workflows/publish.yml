@@ -43,8 +43,8 @@ jobs:
           npm ci
           npm run check
 
-  # The action of this commit runs the CLI that package.json names, which
-  # is already on npm: a new CLI releases from the next release on.
+  # The action of this commit runs the CLI built from this commit: the
+  # release uses the code that the test job has just tested.
   release:
     name: Release
     needs: test
@@ -58,6 +58,18 @@ jobs:
       dist-tag: ${{ steps.release.outputs.dist-tag }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '24'
+          cache: npm
+
+      # `dist/` and `node_modules/` are ignored: the release commit leaves them out.
+      - name: Build
+        run: |
+          npm ci
+          npm run build
 
       - name: Release
         id: release
@@ -104,20 +116,3 @@ jobs:
           access: public
           provenance: true
           tag: ${{ needs.release.outputs.dist-tag }}
-
-      # npm can answer a few seconds after the publish that a new version does
-      # not exist yet: wait for it before npx installs it.
-      - name: Wait for the package on npm
-        run: |
-          for _ in $(seq 30); do
-            npm view "@weareikko/changelog@$VERSION" version --prefer-online | grep -qx "$VERSION" && exit 0
-            sleep 5
-          done
-          echo "::error::@weareikko/changelog@$VERSION is not on npm after 150 seconds."
-          exit 1
-
-      # The action of the released tag runs the package that was just published.
-      - name: Check the published package with the action
-        uses: ./
-        with:
-          command: check
