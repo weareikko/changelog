@@ -31,7 +31,8 @@ Options:
                              "## v1.2.0" (env: CHANGELOG_HEADING_PREFIX)
   --date <YYYY-MM-DD>        release: date of the heading (default: today)
   --notes-file <file>        release: write the new section without its heading
-  --dotenv <file>            release: write CHANGELOG_CHANGED and CHANGELOG_VERSION (GitLab dotenv report)
+  --dotenv <file>            release: write CHANGELOG_CHANGED, CHANGELOG_VERSION, CHANGELOG_PRERELEASE
+                             and CHANGELOG_DIST_TAG (GitLab dotenv report)
   --skip-label <label>       Label that lifts the fragment requirement (default: no-changelog;
                              env: CHANGELOG_SKIP_LABEL)
   --skip-authors <names>     Authors that need no fragment; release lists their changes under

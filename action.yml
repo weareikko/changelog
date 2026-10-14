@@ -58,10 +58,10 @@ outputs:
     value: ${{ steps.run.outputs.body }}
   prerelease:
     description: '`release`: `true` for a prerelease version (with a `-`, e.g. `1.2.0-rc.0`), else `false`.'
-    value: ${{ steps.push.outputs.prerelease }}
+    value: ${{ steps.run.outputs.prerelease }}
   dist-tag:
-    description: '`release`: the npm dist-tag of the version: `next` for a prerelease, else `latest`.'
-    value: ${{ steps.push.outputs.dist-tag }}
+    description: '`release`: the npm dist-tag of the version: `next` for a prerelease, else `latest` (empty when there is nothing to release).'
+    value: ${{ steps.run.outputs.dist-tag }}
 
 runs:
   using: composite
@@ -113,7 +113,7 @@ runs:
             # the run of the newer commit releases.
             if [[ "$(git ls-remote origin "refs/heads/$GITHUB_REF_NAME" | cut -f1)" != "$(git rev-parse HEAD)" ]]; then
               echo "::notice::$GITHUB_REF_NAME has moved on since this run started: the run of the newer commit releases."
-              printf 'changed=false\nversion=\n' >> "$GITHUB_OUTPUT"
+              printf 'changed=false\nversion=\nprerelease=false\ndist-tag=\n' >> "$GITHUB_OUTPUT"
               exit 0
             fi
             # `release` reads the tags and the commit that added each fragment.
@@ -137,6 +137,7 @@ runs:
       env:
         GH_TOKEN: ${{ inputs.github-token }}
         VERSION: ${{ steps.run.outputs.version }}
+        PRERELEASE: ${{ steps.run.outputs.prerelease }}
         COMMIT_MESSAGE: ${{ inputs.commit-message }}
         MOVING_TAGS: ${{ inputs.moving-tags }}
       run: |
@@ -155,14 +156,6 @@ runs:
         git commit --quiet --message "${COMMIT_MESSAGE//'{version}'/$VERSION}"
         git tag "$VERSION"
         git push --quiet origin "HEAD:refs/heads/$GITHUB_REF_NAME" "refs/tags/$VERSION"
-
-        PRERELEASE=false
-        DIST_TAG=latest
-        if [[ $VERSION == *-* ]]; then
-          PRERELEASE=true
-          DIST_TAG=next
-        fi
-        printf 'prerelease=%s\ndist-tag=%s\n' "$PRERELEASE" "$DIST_TAG" >> "$GITHUB_OUTPUT"
 
         if [[ $MOVING_TAGS == true && $PRERELEASE == false ]]; then
           for TAG in "${VERSION%%.*}" "${VERSION%.*}"; do

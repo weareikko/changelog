@@ -149,7 +149,7 @@ The CLI only edits files. Writing the version in your package files, committing,
 | `--heading-prefix <prefix>` | `release` | none                                             | `CHANGELOG_HEADING_PREFIX`  | Text before the version in the heading, not in the version: `v` gives `## v1.2.0`.                                                       |
 | `--date <YYYY-MM-DD>`       | `release` | today                                            |                             | Date of the version heading, and of the `calver` version.                                                                                |
 | `--notes-file <file>`       | `release` | none                                             |                             | Write the new section without its heading (empty when nothing changed).                                                                  |
-| `--dotenv <file>`           | `release` | none                                             |                             | Write `CHANGELOG_CHANGED=true\|false` and `CHANGELOG_VERSION=<version>` (the released version).                                          |
+| `--dotenv <file>`           | `release` | none                                             |                             | Write `CHANGELOG_CHANGED`, `CHANGELOG_VERSION`, `CHANGELOG_PRERELEASE` and `CHANGELOG_DIST_TAG`, the values of the outputs below.        |
 | `--skip-label <label>`      | both      | `no-changelog`                                   | `CHANGELOG_SKIP_LABEL`      | Label that lifts the fragment requirement and skips a bot entry.                                                                         |
 | `--skip-authors <names>`    | both      | `renovate[bot]` on GitHub, none on GitLab        | `CHANGELOG_SKIP_AUTHORS`    | Logins or usernames, one per line or comma-separated. An empty value means none.                                                         |
 | `--locale en\|fr`           | both      | `en`                                             | `CHANGELOG_LOCALE`          | Section names.                                                                                                                           |
@@ -164,7 +164,8 @@ Flags win over environment variables. `changelog --help` shows the options and `
 
 Outputs:
 
-- `release` appends `changed` (`true` or `false`), `version` (the released version: the given one, or the computed one with `--version auto` or a bump, empty when there is nothing to release) and `body` (the new section without its heading) to `GITHUB_OUTPUT` when it is set (GitHub Actions).
+- `release` appends `changed` (`true` or `false`), `version` (the released version: the given one, or the computed one with `--version auto` or a bump, empty when there is nothing to release), `prerelease` (`true` when the version has a `-` before its build metadata, as in `1.2.0-rc.0`, else `false`), `dist-tag` (the npm dist-tag: `next` for a prerelease, `latest` for a stable version, empty when `version` is empty) and `body` (the new section without its heading) to `GITHUB_OUTPUT` when it is set (GitHub Actions).
+- `--dotenv` writes the same values as `CHANGELOG_CHANGED`, `CHANGELOG_VERSION`, `CHANGELOG_PRERELEASE` and `CHANGELOG_DIST_TAG`.
 - `--notes-file` and `--dotenv` work on both platforms.
 - `check` prints errors as `::error file=…,line=…::` annotations in GitHub Actions, and as `file:line: message` lines elsewhere.
 
@@ -286,13 +287,13 @@ A tag pushed with `GITHUB_TOKEN` starts no workflow, so publish in a job that `n
 
 ### Outputs
 
-| Output       | Description                                                                           |
-| ------------ | ------------------------------------------------------------------------------------- |
-| `changed`    | `release`: `true` when `CHANGELOG.md` got a new section.                              |
-| `version`    | `release`: the released version and its tag (empty when there is nothing to release). |
-| `body`       | `release`: the new section without its `##` heading.                                  |
-| `prerelease` | `release`: `true` for a prerelease version (with a `-`), else `false`.                |
-| `dist-tag`   | `release`: the npm dist-tag: `next` for a prerelease, else `latest`.                  |
+| Output       | Description                                                                                                   |
+| ------------ | ------------------------------------------------------------------------------------------------------------- |
+| `changed`    | `release`: `true` when `CHANGELOG.md` got a new section.                                                      |
+| `version`    | `release`: the released version and its tag (empty when there is nothing to release).                         |
+| `body`       | `release`: the new section without its `##` heading.                                                          |
+| `prerelease` | `release`: `true` for a prerelease version (with a `-`), else `false`.                                        |
+| `dist-tag`   | `release`: the npm dist-tag: `next` for a prerelease, else `latest` (empty when there is nothing to release). |
 
 ### Version of the action
 
@@ -302,7 +303,7 @@ The action sets up Node.js 24 (it stays on the `PATH` for the next steps) and ru
 
 The tool detects GitLab CI from `GITLAB_CI`, `CI_PROJECT_ID` or `CI_SERVER_URL`. It reads `CI_SERVER_URL`, `CI_PROJECT_ID`, `CI_PROJECT_URL`, `CI_COMMIT_BRANCH` and the `CI_MERGE_REQUEST_*` variables. In a GitLab CI job, `CI_JOB_TOKEN` is enough on GitLab 18.4 or later: see [Tokens](#tokens).
 
-GitLab Code Quality reports show the fragment errors in the merge request widget. A `dotenv` report gives `CHANGELOG_CHANGED` and `CHANGELOG_VERSION` to the next jobs, and `--notes-file` gives the release notes to the [`release` keyword](https://docs.gitlab.com/ci/yaml/#release), which runs `glab` in the job image.
+GitLab Code Quality reports show the fragment errors in the merge request widget. A `dotenv` report gives `CHANGELOG_CHANGED`, `CHANGELOG_VERSION`, `CHANGELOG_PRERELEASE` and `CHANGELOG_DIST_TAG` to the next jobs, and `--notes-file` gives the release notes to the [`release` keyword](https://docs.gitlab.com/ci/yaml/#release), which runs `glab` in the job image.
 
 ```yaml
 stages: [test, release]
@@ -354,6 +355,8 @@ release:
     tag_name: $CHANGELOG_VERSION
     description: ./release-notes.md
 ```
+
+For an npm package, publish the tag `$CHANGELOG_VERSION` in a later job with `npm publish --tag "$CHANGELOG_DIST_TAG"`: `next` for a prerelease, `latest` for a stable version.
 
 Notes:
 
