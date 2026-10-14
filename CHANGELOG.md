@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file. Each pull reque
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.1.3 - 2026-10-14
+
+### Changed
+
+- The action runs `bin/changelog.js` when its directory has a build (`dist/cli.js`), so a built checkout of this repository uses its own CLI; a pinned action still runs the npm package ([#15])
+
+[#15]: https://github.com/weareikko/changelog/pull/15
+
 ## 0.1.2 - 2026-10-14
 
 ### Added
