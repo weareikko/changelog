@@ -44,9 +44,11 @@ export interface Platform {
   /**
    * The merged change that contains `sha`, or null. A change merged into the
    * current branch comes first; a stacked change merged into another branch
-   * also counts.
+   * also counts. With `file`, the fragment that `sha` added: on GitHub, the
+   * change whose files include it, which can be a pull request stacked on the
+   * one found.
    */
-  findMergedChange(sha: string): Promise<MergedChange | null>;
+  findMergedChange(sha: string, file?: string): Promise<MergedChange | null>;
 }
 
 export function createPlatform(config: Config, fetchImpl: typeof fetch): Platform {

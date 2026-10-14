@@ -1,7 +1,7 @@
 import type { References } from '../changelog.js';
 import type { GitHubConfig } from '../config.js';
 import { ConfigError } from '../errors.js';
-import { GitHubClient } from '../github.js';
+import { GitHubClient, type GitHubPull } from '../github.js';
 import type { Change, MergedChange, Platform } from '../platform.js';
 
 /**
@@ -15,6 +15,9 @@ export class GitHubPlatform implements Platform {
   readonly references: References;
   private readonly config: GitHubConfig;
   private readonly client: GitHubClient;
+  /** The files of each pull request, and the merged pull requests based on each branch. */
+  private readonly pullFiles = new Map<number, Promise<string[]>>();
+  private readonly stackedPulls = new Map<string, Promise<GitHubPull[]>>();
 
   constructor(config: GitHubConfig, fetchImpl: typeof fetch) {
     this.config = config;
@@ -45,7 +48,7 @@ export class GitHubPlatform implements Platform {
     };
   }
 
-  async findMergedChange(sha: string): Promise<MergedChange | null> {
+  async findMergedChange(sha: string, file?: string): Promise<MergedChange | null> {
     if (this.unavailable) {
       throw new ConfigError(`${this.unavailable}: cannot read pull requests.`, {
         hint: 'Run in GitHub Actions, or set GITHUB_REPOSITORY (owner/repo) and GITHUB_TOKEN.',
@@ -56,14 +59,52 @@ export class GitHubPlatform implements Platform {
     // `gh stack merge` merges a stack into the trunk but keeps the base branch of each pull
     // request: the commit is in the history of the current branch, so any merged pull request
     // fits when none has the current branch as its base.
-    const merged =
+    const found =
       mergedPulls.find((pull) => pull.base?.ref === this.config.branch) ?? mergedPulls[0];
-    if (!merged) return null;
+    if (!found) return null;
+    const merged = (file ? await this.findAddingPull(found, file) : null) ?? found;
     return {
       number: merged.number,
       title: merged.title,
       author: merged.user?.login,
       labels: (merged.labels ?? []).map((label) => label.name ?? '').filter(Boolean),
     };
+  }
+
+  /**
+   * `pull`, or the first merged pull request stacked on it (based on its head branch, or on
+   * the head branch of such a pull request), whose files include `file`, or null. After
+   * `gh stack merge`, GitHub links every commit of the stack to its bottom pull request.
+   */
+  private async findAddingPull(pull: GitHubPull, file: string): Promise<GitHubPull | null> {
+    const queue = [pull];
+    const seen = new Set<number>();
+    for (const candidate of queue) {
+      if (seen.has(candidate.number)) continue;
+      seen.add(candidate.number);
+      if ((await this.listFiles(candidate.number)).includes(file)) return candidate;
+      if (candidate.head?.ref) queue.push(...(await this.listStacked(candidate.head.ref)));
+    }
+    return null;
+  }
+
+  private listFiles(number: number): Promise<string[]> {
+    let files = this.pullFiles.get(number);
+    if (!files) {
+      files = this.client.listPullFiles(number);
+      this.pullFiles.set(number, files);
+    }
+    return files;
+  }
+
+  private listStacked(branch: string): Promise<GitHubPull[]> {
+    let pulls = this.stackedPulls.get(branch);
+    if (!pulls) {
+      pulls = this.client
+        .listClosedPulls(branch)
+        .then((closed) => closed.filter((pull) => pull.merged_at));
+      this.stackedPulls.set(branch, pulls);
+    }
+    return pulls;
   }
 }

@@ -8,6 +8,7 @@ export interface GitHubPull {
   user?: { login?: string } | null;
   labels?: { name?: string }[];
   base?: { ref?: string } | null;
+  head?: { ref?: string } | null;
 }
 
 export interface GitHubClientOptions {
@@ -18,12 +19,15 @@ export interface GitHubClientOptions {
   fetch?: typeof fetch;
 }
 
+/** The largest page of a GitHub list endpoint. */
+const PER_PAGE = 100;
+
 const ACCESS_HINT =
   'The token (GITHUB_TOKEN or --github-token) needs the contents: read and pull-requests: read permissions. ' +
   'In a workflow, set them in `permissions:`.';
 
 /**
- * Explicit GitHub REST client for the one read endpoint the tool needs. The
+ * Explicit GitHub REST client for the read endpoints the tool needs. The
  * token goes in the `Authorization` header and no error message contains it.
  */
 export class GitHubClient {
@@ -70,8 +74,30 @@ export class GitHubClient {
     return (await response.json()) as T;
   }
 
+  /** Every page of a list endpoint. */
+  private async getAll<T>(path: string): Promise<T[]> {
+    const items: T[] = [];
+    for (let page = 1; ; page += 1) {
+      const separator = path.includes('?') ? '&' : '?';
+      const batch = await this.get<T[]>(`${path}${separator}per_page=${PER_PAGE}&page=${page}`);
+      items.push(...batch);
+      if (batch.length < PER_PAGE) return items;
+    }
+  }
+
   /** `GET /repos/:owner/:repo/commits/:sha/pulls` */
   listCommitPulls(sha: string): Promise<GitHubPull[]> {
     return this.get(`/commits/${encodeURIComponent(sha)}/pulls`);
+  }
+
+  /** `GET /repos/:owner/:repo/pulls?state=closed&base=:base`, every page. */
+  listClosedPulls(base: string): Promise<GitHubPull[]> {
+    return this.getAll(`/pulls?state=closed&base=${encodeURIComponent(base)}`);
+  }
+
+  /** The paths of `GET /repos/:owner/:repo/pulls/:number/files`, every page. */
+  async listPullFiles(number: number): Promise<string[]> {
+    const files = await this.getAll<{ filename: string }>(`/pulls/${number}/files`);
+    return files.map((file) => file.filename);
   }
 }

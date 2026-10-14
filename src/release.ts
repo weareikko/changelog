@@ -49,7 +49,7 @@ async function resolveFragments(platform: Platform, runtime: Runtime): Promise<D
       fragments.push({ file, text, pr: null, time: Number.POSITIVE_INFINITY });
       continue;
     }
-    const merged = platform.unavailable ? null : await platform.findMergedChange(commit.sha);
+    const merged = platform.unavailable ? null : await platform.findMergedChange(commit.sha, file);
     fragments.push({ file, text, pr: merged?.number ?? null, time: commit.time });
   }
   return fragments.toSorted((a, b) => a.time - b.time || a.file.localeCompare(b.file));
