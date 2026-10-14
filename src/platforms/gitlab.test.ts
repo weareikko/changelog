@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { resolveConfig } from '../config.js';
-import { routeFetch } from '../test-utils.js';
+import type { Git } from '../git.js';
+import { routeFetch, tableGit } from '../test-utils.js';
 import { GitLabPlatform } from './gitlab.js';
 
 const CI = {
@@ -20,9 +21,73 @@ const MR_PIPELINE = {
 
 const API = '/api/v4/projects/42';
 
-function platform(env: Record<string, string>, fetchImpl = routeFetch({}), argv: string[] = []) {
-  return new GitLabPlatform(resolveConfig(['check', ...argv], env).gitlab, fetchImpl);
+function platform(
+  env: Record<string, string>,
+  fetchImpl = routeFetch({}),
+  argv: string[] = [],
+  git: Git = tableGit({}),
+) {
+  return new GitLabPlatform(resolveConfig(['check', ...argv], env).gitlab, fetchImpl, git);
 }
+
+/**
+ * A git that answers `merge-base --is-ancestor` from a commit graph (each
+ * commit and its parents). Like git, it fails for an unknown object.
+ */
+function graphGit(parents: Record<string, string[]>): Git {
+  const resolve = (revision: string): string => {
+    const [commit, parent] = revision.split('^');
+    const sha = parent === undefined ? commit : parents[commit]?.[Number(parent) - 1];
+    if (sha === undefined || !(sha in parents)) throw new Error(`Not a valid commit: ${revision}`);
+    return sha;
+  };
+  return vi.fn<Git>(async (args) => {
+    const [command, flag, ancestor, commit] = args;
+    if (`${command} ${flag}` !== 'merge-base --is-ancestor') {
+      throw new Error(`Unexpected git ${args.join(' ')}`);
+    }
+    const target = resolve(ancestor);
+    const queue = [resolve(commit)];
+    for (const sha of queue) {
+      if (sha === target) return '';
+      queue.push(...parents[sha]);
+    }
+    throw new Error('Not an ancestor');
+  });
+}
+
+/**
+ * A stack merged from the top: !13 into the branch of !12 (after a retarget),
+ * !12 into the branch of !11, !11 into the branch of !10, then !10 into main.
+ * The fragment commit `cN` is on the branch of !N, `mN` is the merge commit of !N.
+ */
+const STACK = {
+  base: [],
+  c10: ['base'],
+  c11: ['c10'],
+  c12: ['c11'],
+  c13: ['c12'],
+  m13: ['c12', 'c13'],
+  m12: ['c11', 'm13'],
+  m11: ['c10', 'm12'],
+  main: ['base'],
+  m10: ['main', 'm11'],
+};
+
+function merged(iid: number, target: string, mergeCommit: string | null = `m${iid}`) {
+  return {
+    iid,
+    title: `MR ${iid}`,
+    state: 'merged',
+    target_branch: target,
+    merge_commit_sha: mergeCommit,
+  };
+}
+
+const MR10 = merged(10, 'main');
+const MR11 = merged(11, 'feature/a');
+const MR12 = merged(12, 'feature/b');
+const MR13 = merged(13, 'feature/c');
 
 describe('GitLabPlatform', () => {
   it('writes !N references to the project', () => {
@@ -141,5 +206,58 @@ describe('GitLabPlatform', () => {
     expect(await gitlab.findMergedChange('def')).toEqual(bare);
     expect(await platform(CI, fetchImpl).findMergedChange('def')).toEqual(bare);
     expect(await gitlab.findMergedChange('none')).toBeNull();
+  });
+
+  it('finds the merge request that brought a commit of a stack merged from the top', async () => {
+    // GitLab links each commit to its merge request and to the ones below it, in any order.
+    const fetchImpl = routeFetch({
+      [`${API}/repository/commits/c10/merge_requests`]: [MR13, MR10],
+      [`${API}/repository/commits/c11/merge_requests`]: [MR11, MR13, MR10],
+      [`${API}/repository/commits/c12/merge_requests`]: [MR12, MR11, MR13, MR10],
+      [`${API}/repository/commits/c13/merge_requests`]: [MR12, MR11, MR13, MR10],
+    });
+    const git = graphGit(STACK);
+    const gitlab = platform({ ...CI, CI_COMMIT_BRANCH: 'main' }, fetchImpl, [], git);
+    const numbers: (number | undefined)[] = [];
+    for (const sha of ['c10', 'c11', 'c12', 'c13']) {
+      numbers.push((await gitlab.findMergedChange(sha))?.number);
+    }
+    expect(numbers).toEqual([10, 11, 12, 13]);
+    expect(String(fetchImpl.mock.calls[0][0])).toBe(
+      'https://gitlab.example.com/api/v4/projects/42/repository/commits/c10/merge_requests',
+    );
+    expect(git).toHaveBeenCalledWith(['merge-base', '--is-ancestor', 'c13', 'm13^2']);
+    expect(git).toHaveBeenCalledWith(['merge-base', '--is-ancestor', 'c13', 'm13^1']);
+    expect(git).toHaveBeenCalledWith(['merge-base', '--is-ancestor', 'm13', 'm12']);
+  });
+
+  it('keeps the target branch rule when git cannot tell', async () => {
+    const fetchImpl = routeFetch({
+      // Squash merges (one parent) and a fast-forward merge (no merge commit).
+      [`${API}/repository/commits/c20/merge_requests`]: [
+        merged(21, 'next', 's21'),
+        merged(22, 'main', null),
+        merged(23, 'main', 's23'),
+      ],
+      // A commit that the clone does not have.
+      [`${API}/repository/commits/gone/merge_requests`]: [MR13, MR10],
+      // One commit merged into two branches: neither merge comes first.
+      [`${API}/repository/commits/c30/merge_requests`]: [merged(31, 'release'), merged(30, 'main')],
+    });
+    const git = graphGit({
+      ...STACK,
+      c20: ['base'],
+      s21: ['base'],
+      s23: ['s21'],
+      c30: ['base'],
+      m30: ['main', 'c30'],
+      release: ['base'],
+      m31: ['release', 'c30'],
+    });
+    const gitlab = platform({ ...CI, CI_COMMIT_BRANCH: 'main' }, fetchImpl, [], git);
+    expect((await gitlab.findMergedChange('c20'))?.number).toBe(22);
+    expect((await gitlab.findMergedChange('gone'))?.number).toBe(10);
+    expect((await gitlab.findMergedChange('c30'))?.number).toBe(30);
+    expect((await platform(CI, fetchImpl, [], git).findMergedChange('c30'))?.number).toBe(31);
   });
 });

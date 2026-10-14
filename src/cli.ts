@@ -92,7 +92,7 @@ export async function main(
 
   runtime.stderr(`${__PKG_NAME__} ${__PKG_VERSION__}: ${config.command} on ${config.platform}`);
   try {
-    const platform = createPlatform(config, runtime.fetch);
+    const platform = createPlatform(config, runtime.fetch, runtime.git);
     return config.command === 'check'
       ? await check(config, platform, runtime)
       : await release(config, platform, runtime);

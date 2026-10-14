@@ -10,6 +10,8 @@ export interface GitLabMergeRequest {
   source_branch: string;
   author?: { username?: string } | null;
   labels?: string[];
+  /** The merge commit of a merged merge request, null after a fast-forward merge. */
+  merge_commit_sha?: string | null;
   /** Only on `GET /projects/:id/merge_requests/:iid`. */
   diff_refs?: { base_sha?: string | null } | null;
 }
