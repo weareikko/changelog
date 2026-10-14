@@ -2,7 +2,7 @@
 
 ## Project
 
-`@weareikko/changelog` is a Node.js `>=24`, ESM TypeScript CLI and library, with a GitHub Action (`action.yml`) that runs the published package. `check` validates `.changelog/` fragments and, on a pull or merge request, requires one; `release` folds them into `CHANGELOG.md`. It runs on GitHub Actions and GitLab CI with the same flow.
+`@weareikko/changelog` is a Node.js `>=24`, ESM TypeScript CLI and library, with a GitHub Action (`action.yml`) that runs the published package (or, in a built checkout of this repository, the local build). `check` validates `.changelog/` fragments and, on a pull or merge request, requires one; `release` folds them into `CHANGELOG.md`. It runs on GitHub Actions and GitLab CI with the same flow.
 
 ## Commands
 
@@ -52,4 +52,4 @@
 - Prereleases: a pull request adds `.changelog/prerelease` (one line: `alpha`, `beta` or `rc`), each merge then releases the next prerelease, and the pull request that deletes the file releases the stable version. Never delete or edit it outside of such a pull request.
 - Mark a breaking entry with `Breaking: `, `**Breaking:** `, `**Breaking**: ` or `⚠️ ` (after the package prefix, if any): from 1.0.0 it gives a major version, on 0.x a minor version.
 - npm trusted publishing is bound to `publish.yml`: keep the release and publish jobs in that file.
-- The action runs the published package at the version of `package.json`: the CI runs the local build (`node bin/changelog.js`), and the release job runs the action of the same commit with the CLI that is already on npm. `release` in `action.yml` also bumps `package.json`, commits, tags, pushes and creates the GitHub release; the publish job only builds and publishes.
+- The action runs the published package at the version of `package.json`, except in a checkout of this repository with a build (`dist/cli.js`): there it runs `bin/changelog.js`. The CI `changelog` job and the release job build first, then run `uses: ./`, so they dogfood the action and the CLI of the same commit; no step waits for npm. `release` in `action.yml` also bumps `package.json`, commits, tags, pushes and creates the GitHub release; the publish job only builds and publishes.
