@@ -108,6 +108,7 @@ describe('release', () => {
         '/repos/acme/repo/commits/sha-a/pulls': [
           { number: 12, title: 'A', merged_at: '2026-01-02', base: { ref: 'main' } },
         ],
+        '/repos/acme/repo/pulls/12/files': [{ filename: '.changelog/a.md' }],
         '/repos/acme/repo/commits/sha-b/pulls': [],
       }),
     });
@@ -135,6 +136,43 @@ describe('release', () => {
     expect(existsSync(join(cwd, '.changelog/.gitkeep'))).toBe(true);
     expect(read('notes.md')).toBe(`${body}\n`);
     expect(read('github-output')).toContain(`\ntrue\n`);
+  });
+
+  it('links each fragment of a stack merged with gh stack merge to its own pull request', async () => {
+    const { read, code } = run(['--version', '1.1.0'], {
+      env: GITHUB,
+      files: {
+        '.changelog/a.md': '### Fixed\n\n- Fix a\n',
+        '.changelog/b.md': '### Fixed\n\n- Fix b\n',
+      },
+      git: tableGit({
+        [added('.changelog/a.md')]: 'sha-a 100\n',
+        [added('.changelog/b.md')]: 'sha-b 200\n',
+        'tag --merged HEAD': '',
+      }),
+      // GitHub links every commit of the stack to its bottom pull request.
+      fetch: routeFetch({
+        '/repos/acme/repo/commits/sha-': [
+          {
+            number: 85,
+            title: 'A',
+            merged_at: '2026-01-02',
+            base: { ref: 'main' },
+            head: { ref: 'feature/a' },
+          },
+        ],
+        '/repos/acme/repo/pulls/85/files': [{ filename: '.changelog/a.md' }],
+        '/repos/acme/repo/pulls?state=closed&base=feature%2Fa&': [
+          { number: 86, title: 'B', merged_at: '2026-01-02', head: { ref: 'feature/b' } },
+        ],
+        '/repos/acme/repo/pulls/86/files': [{ filename: '.changelog/b.md' }],
+      }),
+    });
+    expect(await code).toBe(0);
+    expect(read('CHANGELOG.md')).toContain(
+      '### Fixed\n\n- Fix a ([#85])\n- Fix b ([#86])\n\n' +
+        '[#85]: https://github.com/acme/repo/pull/85\n[#86]: https://github.com/acme/repo/pull/86\n',
+    );
   });
 
   it('adds the merge requests of skip-authors since the previous tag on GitLab, in French', async () => {

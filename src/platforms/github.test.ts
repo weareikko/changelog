@@ -104,4 +104,64 @@ describe('GitHubPlatform', () => {
       labels: [],
     });
   });
+
+  it('finds the stacked pull request that added a fragment after gh stack merge', async () => {
+    // Every commit of the stack links to the bottom pull request (#85).
+    const bottom = {
+      number: 85,
+      title: 'Bottom',
+      merged_at: '2026-01-01',
+      base: { ref: 'main' },
+      head: { ref: 'feature/a' },
+    };
+    const fetchImpl = routeFetch({
+      '/repos/acme/repo/commits/sha/pulls': [bottom],
+      '/repos/acme/repo/pulls/85/files': [
+        { filename: 'src/a.ts' },
+        { filename: '.changelog/a.md' },
+      ],
+      '/repos/acme/repo/pulls?state=closed&base=feature%2Fa&': [
+        { number: 84, title: 'Closed', merged_at: null, head: { ref: 'feature/x' } },
+        { number: 86, title: 'Middle', merged_at: '2026-01-01', head: { ref: 'feature/b' } },
+      ],
+      '/repos/acme/repo/pulls/86/files': [{ filename: '.changelog/b.md' }],
+      '/repos/acme/repo/pulls?state=closed&base=feature%2Fb&': [
+        bottom,
+        { number: 87, title: 'Bare', merged_at: '2026-01-01' },
+        {
+          number: 88,
+          title: 'Top',
+          merged_at: '2026-01-01',
+          head: { ref: 'feature/c' },
+          user: { login: 'octocat' },
+          labels: [{ name: 'feature' }],
+        },
+      ],
+      '/repos/acme/repo/pulls/87/files': [],
+      '/repos/acme/repo/pulls/88/files': [{ filename: '.changelog/c.md' }],
+      '/repos/acme/repo/pulls?state=closed&base=feature%2Fc&': [],
+    });
+    const github = platform(
+      { GITHUB_REPOSITORY: 'acme/repo', GITHUB_REF: 'refs/heads/main' },
+      fetchImpl,
+    );
+
+    expect(await github.findMergedChange('sha', '.changelog/a.md')).toMatchObject({ number: 85 });
+    expect(await github.findMergedChange('sha', '.changelog/b.md')).toMatchObject({ number: 86 });
+    expect(await github.findMergedChange('sha', '.changelog/c.md')).toEqual({
+      number: 88,
+      title: 'Top',
+      author: 'octocat',
+      labels: ['feature'],
+    });
+    // No pull request of the stack lists the file: the one of the commit.
+    expect(await github.findMergedChange('sha', '.changelog/gone.md')).toMatchObject({
+      number: 85,
+    });
+
+    // Each list is read once.
+    const paths = fetchImpl.mock.calls.map(([url]) => new URL(String(url)).pathname);
+    expect(paths.filter((path) => path === '/repos/acme/repo/pulls/85/files')).toHaveLength(1);
+    expect(paths.filter((path) => path === '/repos/acme/repo/pulls')).toHaveLength(3);
+  });
 });

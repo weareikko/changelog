@@ -33,6 +33,41 @@ describe('GitHubClient', () => {
     });
   });
 
+  it('lists the closed pull requests of a base branch, every page', async () => {
+    const full = Array.from({ length: 100 }, (_, index) => ({ number: index + 1 }));
+    const fetchImpl = vi.fn<typeof fetch>(async (input) =>
+      Response.json(String(input).endsWith('page=1') ? full : [{ number: 101 }]),
+    );
+    expect(await client(fetchImpl).listClosedPulls('feature/a b')).toHaveLength(101);
+    expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
+      'https://api.github.com/repos/acme/repo/pulls?state=closed&base=feature%2Fa%20b&per_page=100&page=1',
+      'https://api.github.com/repos/acme/repo/pulls?state=closed&base=feature%2Fa%20b&per_page=100&page=2',
+    ]);
+    expect(fetchImpl.mock.calls[0][1]?.headers).toHaveProperty(
+      'Authorization',
+      'Bearer secret-token',
+    );
+  });
+
+  it('lists the file paths of a pull request', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () =>
+      Response.json([{ filename: '.changelog/a.md' }, { filename: 'src/a.ts' }]),
+    );
+    expect(await client(fetchImpl).listPullFiles(6)).toEqual(['.changelog/a.md', 'src/a.ts']);
+    expect(fetchImpl.mock.calls[0][0]).toBe(
+      'https://api.github.com/repos/acme/repo/pulls/6/files?per_page=100&page=1',
+    );
+  });
+
+  it('explains a refused token on a list endpoint', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => new Response('', { status: 404 }));
+    const error = await rejection(client(fetchImpl).listPullFiles(6));
+    expect(error.message).toBe(
+      'GitHub API GET /repos/acme/repo/pulls/6/files?per_page=100&page=1 answered 404.',
+    );
+    expect(error.hint).toContain('pull-requests: read');
+  });
+
   it('sends no Authorization header without a token', async () => {
     const fetchImpl = vi.fn<typeof fetch>(async () => Response.json([]));
     await client(fetchImpl, '').listCommitPulls('abc');
