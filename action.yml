@@ -46,22 +46,24 @@ inputs:
     required: false
     default: ${{ github.token }}
 
+# When the push step finds that the branch has moved on (`superseded`), the
+# run releases nothing: the outputs say so, like a run with nothing to release.
 outputs:
   changed:
-    description: '`release`: `true` when CHANGELOG.md got a new section, `false` when there was no fragment and no pull request from `skip-authors`.'
-    value: ${{ steps.run.outputs.changed }}
+    description: '`release`: `true` when CHANGELOG.md got a new section, `false` when there was no fragment and no pull request from `skip-authors`, or when the branch has moved on (the run of the newer commit releases).'
+    value: ${{ steps.push.outputs.superseded == 'true' && 'false' || steps.run.outputs.changed }}
   version:
     description: '`release`: the released version, also its tag (empty when there is nothing to release).'
-    value: ${{ steps.run.outputs.version }}
+    value: ${{ steps.push.outputs.superseded != 'true' && steps.run.outputs.version || '' }}
   body:
     description: '`release`: the new section without its `##` heading.'
-    value: ${{ steps.run.outputs.body }}
+    value: ${{ steps.push.outputs.superseded != 'true' && steps.run.outputs.body || '' }}
   prerelease:
     description: '`release`: `true` for a prerelease version (with a `-`, e.g. `1.2.0-rc.0`), else `false`.'
-    value: ${{ steps.run.outputs.prerelease }}
+    value: ${{ steps.push.outputs.superseded == 'true' && 'false' || steps.run.outputs.prerelease }}
   dist-tag:
     description: '`release`: the npm dist-tag of the version: `next` for a prerelease, else `latest` (empty when there is nothing to release).'
-    value: ${{ steps.run.outputs.dist-tag }}
+    value: ${{ steps.push.outputs.superseded != 'true' && steps.run.outputs.dist-tag || '' }}
 
 runs:
   using: composite
@@ -143,19 +145,38 @@ runs:
       run: |
         set -euo pipefail
         # A package.json without a version (tooling only) keeps its form.
+        # `--allow-same-version`: a package that already has the version (a
+        # given version, or a workspace set by hand) does not stop the release.
         if [[ -f package.json ]] && node -e 'process.exit(require("./package.json").version ? 0 : 1)'; then
           WORKSPACES=()
           if node -e 'process.exit(require("./package.json").workspaces ? 0 : 1)'; then
             WORKSPACES=(--workspaces --include-workspace-root)
           fi
-          npm version "$VERSION" --no-git-tag-version "${WORKSPACES[@]}"
+          npm version "$VERSION" --no-git-tag-version --allow-same-version "${WORKSPACES[@]}"
         fi
         git config user.name 'github-actions[bot]'
         git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+        RELEASED_FROM="$(git rev-parse HEAD)"
         git add --update
         git commit --quiet --message "${COMMIT_MESSAGE//'{version}'/$VERSION}"
         git tag "$VERSION"
-        git push --quiet origin "HEAD:refs/heads/$GITHUB_REF_NAME" "refs/tags/$VERSION"
+
+        # One atomic push: the branch and the tag both land, or neither does.
+        # A refused push is checked, not assumed: when the branch has moved on
+        # since the run started, the run of the newer commit releases; when it
+        # has not, the push failed for another reason (token, permissions,
+        # branch protection, network) and the step fails.
+        if ! PUSH_OUTPUT="$(git push --quiet --atomic origin "HEAD:refs/heads/$GITHUB_REF_NAME" "refs/tags/$VERSION" 2>&1)"; then
+          git fetch --quiet --no-tags origin "refs/heads/$GITHUB_REF_NAME"
+          if [[ "$(git rev-parse FETCH_HEAD)" != "$RELEASED_FROM" ]]; then
+            echo "::notice::$GITHUB_REF_NAME has moved on since this run started: the run of the newer commit releases."
+            echo 'superseded=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "$PUSH_OUTPUT" >&2
+          echo "::error::The push of $GITHUB_REF_NAME and the tag $VERSION failed, and $GITHUB_REF_NAME has not moved on."
+          exit 1
+        fi
 
         if [[ $MOVING_TAGS == true && $PRERELEASE == false ]]; then
           for TAG in "${VERSION%%.*}" "${VERSION%.*}"; do

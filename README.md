@@ -263,8 +263,8 @@ jobs:
 
 1. stops when the branch has moved on since the run started: the run of the newer commit releases,
 2. fetches the history and the tags, and folds the fragments with the [automatic version](#automatic-version) (or the given bump or version); without entries, it stops and `version` is empty,
-3. sets the version of `package.json` with `npm version`, when it has a `version` field (with `--workspaces --include-workspace-root` when it has `workspaces`),
-4. commits `commit-message`, tags the version and pushes them to the branch,
+3. sets the version of `package.json` with `npm version --allow-same-version`, when it has a `version` field (with `--workspaces --include-workspace-root` when it has `workspaces`),
+4. commits `commit-message`, tags the version and pushes the branch and the tag in one atomic push: both land, or neither does. When the push fails because the branch has moved on in the meantime, it stops with a notice (the run of the newer commit releases) and the outputs show no release: `changed` is `false`, `version` is empty. Any other push failure fails the step,
 5. with `moving-tags: true`, moves the major (`1`) and minor (`1.2`) tags to a stable version,
 6. creates the GitHub release, marked as a prerelease for a prerelease, with a link to `CHANGELOG.md` as its body.
 
