@@ -6,6 +6,9 @@ import { listTags, type Git } from './git.js';
 /** The `--version` value that computes the next version from the entries. */
 export const AUTO_VERSION = 'auto';
 
+/** The `--version` value that computes a CalVer `YYYY.M.MICRO` version. */
+export const CALVER_VERSION = 'calver';
+
 /** The `--version` values that bump the current version by a fixed level. */
 export const BUMPS = ['patch', 'minor', 'major'] as const;
 
@@ -15,9 +18,9 @@ export function isBump(version: string): version is Bump {
   return (BUMPS as readonly string[]).includes(version);
 }
 
-/** `--version auto` or a bump: the version comes from the tags and the entries. */
+/** `--version auto`, `calver` or a bump: the version comes from the tags and the entries. */
 export function isComputedVersion(version: string): boolean {
-  return version === AUTO_VERSION || isBump(version);
+  return version === AUTO_VERSION || version === CALVER_VERSION || isBump(version);
 }
 
 export interface VersionState {
@@ -147,4 +150,19 @@ export async function resolveVersions(
     .toSorted(semver.rcompare);
   const stable = versions.find((version) => semver.prerelease(version) === null) ?? '0.0.0';
   return { current: current || (versions[0] ?? '0.0.0'), stable };
+}
+
+/**
+ * The CalVer version `YYYY.M.MICRO` of `date` (`YYYY-MM-DD`): MICRO is one
+ * more than the highest `YYYY.M.MICRO` tag reachable from HEAD (a leading `v`
+ * is allowed), or 0 for the first release of the month.
+ */
+export async function nextCalVer(date: string, git: Git): Promise<string> {
+  const [year, month] = date.split('-').map(Number);
+  const prefix = `${year}.${month}.`;
+  const micros = (await listTags(git))
+    .map((tag) => tag.replace(/^v/, ''))
+    .filter((tag) => tag.startsWith(prefix) && /^\d+$/.test(tag.slice(prefix.length)))
+    .map((tag) => Number(tag.slice(prefix.length)));
+  return `${prefix}${micros.length > 0 ? Math.max(...micros) + 1 : 0}`;
 }

@@ -26,9 +26,11 @@ import {
 import type { Platform } from './platform.js';
 import {
   type Bump,
+  CALVER_VERSION,
   findVersionTag,
   isBump,
   isComputedVersion,
+  nextCalVer,
   nextVersion,
   resolveVersions,
 } from './version.js';
@@ -106,9 +108,9 @@ function writeOutputs(config: Config, runtime: Runtime, version: string, body: s
 }
 
 /**
- * The version and body of an `--version auto` or bump release, or null when
- * there is nothing to release. A stable release that promotes a prerelease
- * without new entries gets a one-line body.
+ * The version and body of an `--version auto`, `calver` or bump release, or
+ * null when there is nothing to release. A stable release that promotes a
+ * prerelease without new entries gets a one-line body.
  */
 async function computedRelease(
   config: Config,
@@ -116,6 +118,12 @@ async function computedRelease(
   preid: string | null,
   built: { body: string | null; change: ChangeLevel | null },
 ): Promise<{ version: string; body: string } | null> {
+  if (config.version === CALVER_VERSION) {
+    if (built.body === null) return null;
+    const version = await nextCalVer(config.date, runtime.git);
+    runtime.stdout(`Version ${version}: CalVer of ${config.date}.`);
+    return { version, body: built.body };
+  }
   const bump: Bump | null = isBump(config.version) ? config.version : null;
   const versions = await resolveVersions(config.current, runtime.git);
   const next = nextVersion({ ...versions, preid }, built.change, bump);
@@ -134,7 +142,8 @@ async function computedRelease(
  * Fold the fragments, and the changes of `skipAuthors` merged since the
  * previous tag, into a new CHANGELOG.md section, and delete the fragments.
  * With `--version auto` (or a bump), the entries (or the bump) and
- * `.changelog/prerelease` give the next version. Returns the exit code.
+ * `.changelog/prerelease` give the next version; with `--version calver`,
+ * the date and the tags of its month. Returns the exit code.
  */
 export async function release(
   config: Config,
@@ -149,7 +158,11 @@ export async function release(
   }
 
   const computed = isComputedVersion(config.version);
-  const prerelease = computed ? readPrerelease(runtime.cwd) : { id: null, errors: [] };
+  // CalVer has no prereleases: like an explicit version, it ignores the file.
+  const prerelease =
+    computed && config.version !== CALVER_VERSION
+      ? readPrerelease(runtime.cwd)
+      : { id: null, errors: [] };
   if (prerelease.errors.length > 0) {
     reportIssues(runtime, prerelease.errors);
     runtime.stderr(
@@ -187,7 +200,8 @@ export async function release(
   }
 
   const { version } = next;
-  const section = formatSection(version, config.date, next.body);
+  const heading = `${config.headingPrefix}${version}`;
+  const section = formatSection(heading, config.date, next.body);
 
   const changelogPath = join(runtime.cwd, 'CHANGELOG.md');
   if (!existsSync(changelogPath)) {
@@ -197,7 +211,7 @@ export async function release(
   }
   writeFileSync(
     changelogPath,
-    insertSection(readFileSync(changelogPath, 'utf8'), section, version),
+    insertSection(readFileSync(changelogPath, 'utf8'), section, heading),
   );
   for (const file of used) rmSync(join(runtime.cwd, file));
 

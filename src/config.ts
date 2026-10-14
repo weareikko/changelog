@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { LOCALES, SECTIONS, type Locale } from './changelog.js';
 import { ConfigError } from './errors.js';
-import { isComputedVersion } from './version.js';
+import { CALVER_VERSION, isComputedVersion } from './version.js';
 
 export const COMMANDS = ['check', 'release'] as const;
 export type Command = (typeof COMMANDS)[number];
@@ -85,12 +85,15 @@ export interface Config {
   skipLabel: string;
   skipAuthors: string[];
   /**
-   * The version heading, `auto` to compute it from the entries, or `patch`,
-   * `minor`, `major` to bump the current version.
+   * The version heading, `auto` to compute it from the entries, `calver` for
+   * a `YYYY.M.MICRO` version, or `patch`, `minor`, `major` to bump the
+   * current version.
    */
   version: string;
   /** For `--version auto` or a bump: the version to bump. Empty: the latest tag. */
   current: string;
+  /** Written before the version in the heading (`v` gives `## v1.2.0`), not in the version. */
+  headingPrefix: string;
   date: string;
   dotenv: string;
   notesFile: string;
@@ -109,6 +112,7 @@ const OPTIONS = {
   platform: { type: 'string' },
   version: { type: 'string' },
   current: { type: 'string' },
+  'heading-prefix': { type: 'string' },
   date: { type: 'string' },
   dotenv: { type: 'string' },
   'notes-file': { type: 'string' },
@@ -129,6 +133,7 @@ const COMMAND_ONLY: Partial<Record<OptionName, Command>> = {
   codequality: 'check',
   version: 'release',
   current: 'release',
+  'heading-prefix': 'release',
   date: 'release',
   dotenv: 'release',
   'notes-file': 'release',
@@ -332,6 +337,7 @@ export function resolveConfig(
       skipAuthors === undefined ? DEFAULT_SKIP_AUTHORS[platform] : splitList(skipAuthors),
     version: values.version ?? '',
     current: first(values.current, env.CHANGELOG_CURRENT_VERSION) ?? '',
+    headingPrefix: values['heading-prefix'] ?? env.CHANGELOG_HEADING_PREFIX ?? '',
     date: values.date || new Date().toISOString().slice(0, 10),
     dotenv: values.dotenv ?? '',
     notesFile: values['notes-file'] ?? '',
@@ -342,10 +348,10 @@ export function resolveConfig(
 
   if (command === 'release' && !config.version) {
     throw new ConfigError('Missing --version.', {
-      hint: 'Pass the version heading, e.g. "changelog release --version 1.2.0", "--version auto" or "--version minor".',
+      hint: 'Pass the version heading, e.g. "changelog release --version 1.2.0", "--version auto", "--version calver" or "--version minor".',
     });
   }
-  if (values.current && !isComputedVersion(config.version)) {
+  if (values.current && (!isComputedVersion(config.version) || config.version === CALVER_VERSION)) {
     throw new ConfigError('--current only applies to "--version auto", patch, minor or major.');
   }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(config.date)) {

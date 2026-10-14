@@ -23,7 +23,7 @@
 - `src/platform.ts`: the `Platform` interface and `createPlatform()`. `src/platforms/github.ts` and `src/platforms/gitlab.ts` implement it.
 - `src/gitlab.ts`, `src/github.ts`: explicit REST clients with an injectable `fetch`, typed errors and access hints.
 - `src/git.ts`: `git` runner (`Git` type, injectable) and the history helpers.
-- `src/version.ts`: `--version auto`: the previous version tag (highest semantic version reachable from HEAD), the latest stable version, and the next version (`semver`), with the prerelease rules of `.changelog/prerelease`.
+- `src/version.ts`: `--version auto` and `calver`: the previous version tag (highest semantic version reachable from HEAD), the latest stable version, and the next version (`semver`), with the prerelease rules of `.changelog/prerelease`, and the CalVer version of a date (`YYYY.M.MICRO`).
 - `src/check.ts`, `src/release.ts`: the two commands. `src/fragments.ts` reads `.changelog/`. `src/output.ts`: annotations, Code Quality report, dotenv, `GITHUB_OUTPUT`, and the `Runtime` type (cwd, env, fetch, git, stdout, stderr).
 - `src/cli.ts`: `main(argv, runtime)`, help and version. `bin/changelog.js` imports `dist/cli.js`.
 - `src/index.ts`: library exports.

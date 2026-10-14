@@ -341,6 +341,61 @@ describe('release', () => {
     expect(read('github-output')).toMatch(/\nversion<<(\S+)\n\n\1\n/);
   });
 
+  describe('with --version calver', () => {
+    it('releases the next version of the month, in French with a heading prefix', async () => {
+      const { runtime, read, code } = run(
+        [
+          '--version',
+          'calver',
+          '--locale',
+          'fr',
+          '--heading-prefix',
+          'v',
+          '--dotenv',
+          'release.env',
+        ],
+        {
+          files: {
+            '.changelog/a.md': '### Corrigé\n- Corrige A\n',
+            '.changelog/prerelease': 'rc\n',
+          },
+          git: tableGit({
+            [added('.changelog/a.md')]: '',
+            'tag --merged HEAD': '2026.x\n2026.9.4\n2026.10.0\n2026.10.1\n',
+          }),
+        },
+      );
+      expect(await code).toBe(0);
+      expect(runtime.out[0]).toBe('Version 2026.10.2: CalVer of 2026-10-12.');
+      expect(read('CHANGELOG.md')).toContain(
+        '## v2026.10.2 - 2026-10-12\n\n### Corrigé\n\n- Corrige A\n\n## 1.0.0',
+      );
+      expect(read('release.env')).toBe('CHANGELOG_CHANGED=true\nCHANGELOG_VERSION=2026.10.2\n');
+      expect(read('.changelog/prerelease')).toBe('rc\n');
+    });
+
+    it('releases nothing without entries', async () => {
+      const { read, code } = run(
+        ['--version', 'calver', '--dotenv', 'release.env', '--skip-authors', ''],
+        { git: tableGit({ 'tag --merged HEAD': '2026.10.0\n' }) },
+      );
+      expect(await code).toBe(0);
+      expect(read('CHANGELOG.md')).toBe(CHANGELOG);
+      expect(read('release.env')).toBe('CHANGELOG_CHANGED=false\nCHANGELOG_VERSION=\n');
+    });
+
+    it('refuses a version that the changelog already has, with its prefix', async () => {
+      const { code } = run(['--version', 'calver', '--heading-prefix', 'v'], {
+        files: {
+          'CHANGELOG.md': '# Changelog\n\n## v2026.10.0 - 2026-10-01\n',
+          '.changelog/a.md': '### Fixed\n- Fix\n',
+        },
+        git: tableGit({ [added('.changelog/a.md')]: '', 'tag --merged HEAD': '' }),
+      });
+      await expect(code).rejects.toThrow('CHANGELOG.md already has a section for v2026.10.0.');
+    });
+  });
+
   describe('with --version auto and .changelog/prerelease', () => {
     const tags = (list: string) => ({ 'tag --merged HEAD': list });
 
