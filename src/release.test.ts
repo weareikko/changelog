@@ -83,10 +83,12 @@ describe('release', () => {
     ]);
     expect(read('CHANGELOG.md')).toBe(CHANGELOG);
     expect(read('.changelog/empty.md')).toBe('\n');
-    expect(read('release.env')).toBe('CHANGELOG_CHANGED=false\nCHANGELOG_VERSION=1.1.0\n');
+    expect(read('release.env')).toBe(
+      'CHANGELOG_CHANGED=false\nCHANGELOG_VERSION=1.1.0\nCHANGELOG_PRERELEASE=false\nCHANGELOG_DIST_TAG=latest\n',
+    );
     expect(read('notes.md')).toBe('');
     expect(read('github-output')).toMatch(
-      /^changed<<(\S+)\nfalse\n\1\nversion<<(\S+)\n1\.1\.0\n\2\nbody<<(\S+)\n\n\3\n$/,
+      /^changed<<(\S+)\nfalse\n\1\nversion<<(\S+)\n1\.1\.0\n\2\nprerelease<<(\S+)\nfalse\n\3\ndist-tag<<(\S+)\nlatest\n\4\nbody<<(\S+)\n\n\5\n$/,
     );
   });
 
@@ -231,7 +233,9 @@ describe('release', () => {
         '## 1.0.0',
       ].join('\n'),
     );
-    expect(read('out/release.env')).toBe('CHANGELOG_CHANGED=true\nCHANGELOG_VERSION=v2.0.0\n');
+    expect(read('out/release.env')).toBe(
+      'CHANGELOG_CHANGED=true\nCHANGELOG_VERSION=v2.0.0\nCHANGELOG_PRERELEASE=false\nCHANGELOG_DIST_TAG=latest\n',
+    );
   });
 
   it('computes the next version with --version auto and --current', async () => {
@@ -245,7 +249,9 @@ describe('release', () => {
     expect(await code).toBe(0);
     expect(runtime.out[0]).toBe('Version 1.2.0: feature change since 1.1.0.');
     expect(read('CHANGELOG.md')).toContain('## 1.2.0 - 2026-10-12\n\n### Added\n\n- A\n');
-    expect(read('release.env')).toBe('CHANGELOG_CHANGED=true\nCHANGELOG_VERSION=1.2.0\n');
+    expect(read('release.env')).toBe(
+      'CHANGELOG_CHANGED=true\nCHANGELOG_VERSION=1.2.0\nCHANGELOG_PRERELEASE=false\nCHANGELOG_DIST_TAG=latest\n',
+    );
     expect(read('github-output')).toMatch(/\nversion<<(\S+)\n1\.2\.0\n\1\n/);
   });
 
@@ -318,7 +324,9 @@ describe('release', () => {
     expect(await code).toBe(0);
     expect(runtime.out[0]).toBe('Version 2.0.0: major bump since 1.1.0.');
     expect(read('CHANGELOG.md')).toContain('## 2.0.0 - 2026-10-12\n\n### Fixed\n\n- Fix\n');
-    expect(read('release.env')).toBe('CHANGELOG_CHANGED=true\nCHANGELOG_VERSION=2.0.0\n');
+    expect(read('release.env')).toBe(
+      'CHANGELOG_CHANGED=true\nCHANGELOG_VERSION=2.0.0\nCHANGELOG_PRERELEASE=false\nCHANGELOG_DIST_TAG=latest\n',
+    );
   });
 
   it('writes an empty version when a bump has nothing to release', async () => {
@@ -337,8 +345,23 @@ describe('release', () => {
     );
     expect(await code).toBe(0);
     expect(read('CHANGELOG.md')).toBe(CHANGELOG);
-    expect(read('release.env')).toBe('CHANGELOG_CHANGED=false\nCHANGELOG_VERSION=\n');
-    expect(read('github-output')).toMatch(/\nversion<<(\S+)\n\n\1\n/);
+    expect(read('release.env')).toBe(
+      'CHANGELOG_CHANGED=false\nCHANGELOG_VERSION=\nCHANGELOG_PRERELEASE=false\nCHANGELOG_DIST_TAG=\n',
+    );
+    expect(read('github-output')).toMatch(
+      /\nversion<<(\S+)\n\n\1\nprerelease<<(\S+)\nfalse\n\2\ndist-tag<<(\S+)\n\n\3\n/,
+    );
+  });
+
+  it('reads a given version with a hyphen in its build metadata as stable', async () => {
+    const { read, code } = run(['--version', '1.2.0+build-1', '--dotenv', 'release.env'], {
+      files: { '.changelog/a.md': '### Fixed\n- Fix\n' },
+      git: tableGit({ [added('.changelog/a.md')]: '' }),
+    });
+    expect(await code).toBe(0);
+    expect(read('release.env')).toBe(
+      'CHANGELOG_CHANGED=true\nCHANGELOG_VERSION=1.2.0+build-1\nCHANGELOG_PRERELEASE=false\nCHANGELOG_DIST_TAG=latest\n',
+    );
   });
 
   describe('with --version calver', () => {
@@ -370,7 +393,9 @@ describe('release', () => {
       expect(read('CHANGELOG.md')).toContain(
         '## v2026.10.2 - 2026-10-12\n\n### Corrigé\n\n- Corrige A\n\n## 1.0.0',
       );
-      expect(read('release.env')).toBe('CHANGELOG_CHANGED=true\nCHANGELOG_VERSION=2026.10.2\n');
+      expect(read('release.env')).toBe(
+        'CHANGELOG_CHANGED=true\nCHANGELOG_VERSION=2026.10.2\nCHANGELOG_PRERELEASE=false\nCHANGELOG_DIST_TAG=latest\n',
+      );
       expect(read('.changelog/prerelease')).toBe('rc\n');
     });
 
@@ -381,7 +406,9 @@ describe('release', () => {
       );
       expect(await code).toBe(0);
       expect(read('CHANGELOG.md')).toBe(CHANGELOG);
-      expect(read('release.env')).toBe('CHANGELOG_CHANGED=false\nCHANGELOG_VERSION=\n');
+      expect(read('release.env')).toBe(
+        'CHANGELOG_CHANGED=false\nCHANGELOG_VERSION=\nCHANGELOG_PRERELEASE=false\nCHANGELOG_DIST_TAG=\n',
+      );
     });
 
     it('refuses a version that the changelog already has, with its prefix', async () => {
@@ -399,11 +426,14 @@ describe('release', () => {
   describe('with --version auto and .changelog/prerelease', () => {
     const tags = (list: string) => ({ 'tag --merged HEAD': list });
 
-    it('starts a prerelease from a stable version', async () => {
-      const { runtime, read, cwd, code } = run(['--version', 'auto', '--current', '1.1.0'], {
-        files: { '.changelog/prerelease': 'rc\n', '.changelog/a.md': '### Added\n- A\n' },
-        git: tableGit({ [added('.changelog/a.md')]: '', ...tags('1\n1.1.0\n') }),
-      });
+    it('starts a prerelease from a stable version, with the next dist-tag', async () => {
+      const { runtime, read, cwd, code } = run(
+        ['--version', 'auto', '--current', '1.1.0', '--dotenv', 'release.env'],
+        {
+          files: { '.changelog/prerelease': 'rc\n', '.changelog/a.md': '### Added\n- A\n' },
+          git: tableGit({ [added('.changelog/a.md')]: '', ...tags('1\n1.1.0\n') }),
+        },
+      );
       expect(await code).toBe(0);
       expect(runtime.out[0]).toBe(
         'Version 1.2.0-rc.0: feature change since 1.1.0 (prerelease "rc").',
@@ -411,6 +441,12 @@ describe('release', () => {
       expect(read('CHANGELOG.md')).toContain('## 1.2.0-rc.0 - 2026-10-12\n\n### Added\n\n- A\n');
       expect(existsSync(join(cwd, '.changelog/a.md'))).toBe(false);
       expect(read('.changelog/prerelease')).toBe('rc\n');
+      expect(read('release.env')).toBe(
+        'CHANGELOG_CHANGED=true\nCHANGELOG_VERSION=1.2.0-rc.0\nCHANGELOG_PRERELEASE=true\nCHANGELOG_DIST_TAG=next\n',
+      );
+      expect(read('github-output')).toMatch(
+        /\nprerelease<<(\S+)\ntrue\n\1\ndist-tag<<(\S+)\nnext\n\2\n/,
+      );
     });
 
     it('moves from beta to rc, and to a major prerelease for a breaking entry', async () => {

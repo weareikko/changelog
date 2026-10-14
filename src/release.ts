@@ -92,16 +92,27 @@ async function listAuthorChanges(
 
 /**
  * `version` is the released version: the given one, or with `--version auto`
- * or a bump the computed one (empty when there is nothing to release).
+ * or a bump the computed one (empty when there is nothing to release). A
+ * version with a `-` before its build metadata is a prerelease, published
+ * under the npm dist-tag `next`; a stable version under `latest`; an empty
+ * version under none.
  */
 function writeOutputs(config: Config, runtime: Runtime, version: string, body: string): void {
   const changed = String(body !== '');
-  setGitHubOutputs(runtime, { changed, version, body });
+  const isPrerelease = /^[^+]*-/.test(version);
+  const prerelease = String(isPrerelease);
+  const distTag = version === '' ? '' : isPrerelease ? 'next' : 'latest';
+  setGitHubOutputs(runtime, { changed, version, prerelease, 'dist-tag': distTag, body });
   if (config.dotenv) {
     writeOutputFile(
       runtime,
       config.dotenv,
-      formatDotenv({ CHANGELOG_CHANGED: changed, CHANGELOG_VERSION: version }),
+      formatDotenv({
+        CHANGELOG_CHANGED: changed,
+        CHANGELOG_VERSION: version,
+        CHANGELOG_PRERELEASE: prerelease,
+        CHANGELOG_DIST_TAG: distTag,
+      }),
     );
   }
   if (config.notesFile) writeOutputFile(runtime, config.notesFile, body ? `${body}\n` : '');
