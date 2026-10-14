@@ -1,6 +1,7 @@
 import type { References } from '../changelog.js';
 import type { GitLabConfig } from '../config.js';
 import { ConfigError } from '../errors.js';
+import { type Git, isAncestor, mergeBringsIn } from '../git.js';
 import { GitLabClient, type GitLabMergeRequest } from '../gitlab.js';
 import type { Change, MergedChange, Platform } from '../platform.js';
 
@@ -27,9 +28,11 @@ export class GitLabPlatform implements Platform {
   readonly references: References;
   private readonly config: GitLabConfig;
   private readonly client: GitLabClient;
+  private readonly git: Git;
 
-  constructor(config: GitLabConfig, fetchImpl: typeof fetch) {
+  constructor(config: GitLabConfig, fetchImpl: typeof fetch, git: Git) {
     this.config = config;
+    this.git = git;
     this.unavailable = findUnavailable(config);
     this.references = {
       prefix: '!',
@@ -97,13 +100,42 @@ export class GitLabPlatform implements Platform {
     return this.fromMergeRequest(await this.api().getMergeRequest(open.iid));
   }
 
+  /**
+   * The merged merge request that brought `sha` in, with local git, or null when git cannot
+   * tell. When a stack is merged from the top (each merge request into the branch below, then
+   * the bottom one into the target), GitLab links a commit to the merge request that added it
+   * and to the ones below. Each of these merge commits brings `sha` in (it is in the history of
+   * the second parent, not of the first): the first one, in the history of all the others, is
+   * the merge request that added it. Squash and fast-forward merges have no such merge commit.
+   */
+  private async findBringingRequest(
+    sha: string,
+    requests: GitLabMergeRequest[],
+  ): Promise<GitLabMergeRequest | null> {
+    if (requests.length < 2) return null;
+    const bringing: { request: GitLabMergeRequest; merge: string }[] = [];
+    for (const request of requests) {
+      const merge = request.merge_commit_sha;
+      if (merge && (await mergeBringsIn(this.git, merge, sha))) bringing.push({ request, merge });
+    }
+    for (const { request, merge } of bringing) {
+      const others = bringing.filter((other) => other.request !== request);
+      const before = await Promise.all(
+        others.map((other) => isAncestor(this.git, merge, other.merge)),
+      );
+      if (before.every(Boolean)) return request;
+    }
+    return null;
+  }
+
   async findMergedChange(sha: string): Promise<MergedChange | null> {
     const requests = await this.api().listCommitMergeRequests(sha);
     const mergedRequests = requests.filter((request) => request.state === 'merged');
-    // A merge request of a stack can target the branch of the merge request below it: the
-    // commit is in the history of the current branch, so any merged merge request fits when
-    // none targets the current branch.
+    // When git cannot tell: a merge request of a stack can target the branch of the merge
+    // request below it, and the commit is in the history of the current branch, so any merged
+    // merge request fits when none targets the current branch.
     const merged =
+      (await this.findBringingRequest(sha, mergedRequests)) ??
       mergedRequests.find((request) => request.target_branch === this.config.branch) ??
       mergedRequests[0];
     if (!merged) return null;

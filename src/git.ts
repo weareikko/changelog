@@ -76,6 +76,28 @@ export async function findAddingCommit(
   return sha ? { sha, time: Number(time) } : null;
 }
 
+/**
+ * Whether `ancestor` is in the history of `commit` (or is `commit`). False
+ * when git cannot tell, for example for an object that the clone does not have.
+ */
+export async function isAncestor(git: Git, ancestor: string, commit: string): Promise<boolean> {
+  try {
+    await git(['merge-base', '--is-ancestor', ancestor, commit]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether the merge commit `merge` brings `sha` in: `sha` is in the history of
+ * its second parent and not in the history of its first. False for a commit
+ * with one parent (a squash or fast-forward merge).
+ */
+export async function mergeBringsIn(git: Git, merge: string, sha: string): Promise<boolean> {
+  return (await isAncestor(git, sha, `${merge}^2`)) && !(await isAncestor(git, sha, `${merge}^1`));
+}
+
 /** The first-parent commits from `tag` (excluded) to HEAD, oldest first. */
 export async function listCommitsSince(git: Git, tag: string): Promise<string[]> {
   const output = await git(['log', '--first-parent', '--format=%H', `${tag}..HEAD`]);

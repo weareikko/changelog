@@ -55,7 +55,7 @@ function run(
     cwd,
     runtime,
     read,
-    code: release(config, createPlatform(config, runtime.fetch), runtime),
+    code: release(config, createPlatform(config, runtime.fetch, runtime.git), runtime),
   };
 }
 
@@ -551,9 +551,9 @@ describe('release', () => {
     const cwd = makeDirectory({ '.changelog/a.md': '### Added\n- A\n' });
     const config = resolveConfig(['release', '--version', '1', '--skip-authors', ''], {});
     const runtime = makeRuntime(cwd, { git: tableGit({ [added('.changelog/a.md')]: '' }) });
-    await expect(release(config, createPlatform(config, runtime.fetch), runtime)).rejects.toThrow(
-      'CHANGELOG.md not found.',
-    );
+    await expect(
+      release(config, createPlatform(config, runtime.fetch, runtime.git), runtime),
+    ).rejects.toThrow('CHANGELOG.md not found.');
   });
 
   it('stops on an API error', async () => {

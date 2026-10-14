@@ -6,9 +6,11 @@ import { GitError } from './errors.js';
 import {
   createGit,
   findAddingCommit,
+  isAncestor,
   listChangedFiles,
   listCommitsSince,
   listTags,
+  mergeBringsIn,
 } from './git.js';
 import { makeDirectory, tableGit } from './test-utils.js';
 
@@ -80,6 +82,25 @@ describe('git helpers on a repository', () => {
     expect(await listCommitsSince(git, '1.0.0')).toEqual([second]);
     run('tag', 'v1.1.0');
     expect(await listTags(git)).toEqual(['1.0.0', 'v1.1.0']);
+  });
+
+  it('tells which commits a merge commit brings in', async () => {
+    const { cwd, run } = repository();
+    const base = commit(cwd, run, { 'a.txt': 'a' });
+    run('checkout', '--quiet', '-b', 'feature');
+    const feature = commit(cwd, run, { 'b.txt': 'b' });
+    run('checkout', '--quiet', 'main');
+    commit(cwd, run, { 'c.txt': 'c' });
+    run('merge', '--quiet', '--no-ff', '--no-edit', 'feature');
+    const merge = run('rev-parse', 'HEAD');
+    const git = createGit(cwd);
+
+    expect(await isAncestor(git, base, merge)).toBe(true);
+    expect(await isAncestor(git, merge, base)).toBe(false);
+    expect(await isAncestor(git, 'f'.repeat(40), merge)).toBe(false);
+    expect(await mergeBringsIn(git, merge, feature)).toBe(true);
+    expect(await mergeBringsIn(git, merge, base)).toBe(false);
+    expect(await mergeBringsIn(git, feature, base)).toBe(false);
   });
 
   it('lists no tag in a repository without tags', async () => {

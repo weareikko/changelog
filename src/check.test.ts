@@ -39,7 +39,7 @@ function run(
   return {
     cwd,
     runtime,
-    code: check(config, createPlatform(config, runtime.fetch), runtime),
+    code: check(config, createPlatform(config, runtime.fetch, runtime.git), runtime),
   };
 }
 

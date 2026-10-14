@@ -1,5 +1,6 @@
 import type { References } from './changelog.js';
 import type { Config } from './config.js';
+import type { Git } from './git.js';
 import { GitHubPlatform } from './platforms/github.js';
 import { GitLabPlatform } from './platforms/gitlab.js';
 
@@ -49,8 +50,8 @@ export interface Platform {
   findMergedChange(sha: string): Promise<MergedChange | null>;
 }
 
-export function createPlatform(config: Config, fetchImpl: typeof fetch): Platform {
+export function createPlatform(config: Config, fetchImpl: typeof fetch, git: Git): Platform {
   return config.platform === 'gitlab'
-    ? new GitLabPlatform(config.gitlab, fetchImpl)
+    ? new GitLabPlatform(config.gitlab, fetchImpl, git)
     : new GitHubPlatform(config.github, fetchImpl);
 }
