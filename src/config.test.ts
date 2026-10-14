@@ -168,6 +168,28 @@ describe('resolveConfig', () => {
     expect(configError(() => resolveConfig(['check', '--current', '1.1.0'], {})).message).toBe(
       '--current only applies to "changelog release".',
     );
+    expect(
+      configError(() => resolveConfig(['release', '--version', 'calver', '--current', '1.1.0'], {}))
+        .message,
+    ).toBe('--current only applies to "--version auto", patch, minor or major.');
+  });
+
+  it('reads the heading prefix for release only', () => {
+    expect(resolveConfig(['release', '--version', 'calver'], {})).toMatchObject({
+      version: 'calver',
+      headingPrefix: '',
+    });
+    expect(
+      resolveConfig(['release', '--version', 'calver', '--heading-prefix', 'v'], {
+        CHANGELOG_HEADING_PREFIX: 'x',
+      }),
+    ).toMatchObject({ headingPrefix: 'v' });
+    expect(
+      resolveConfig(['release', '--version', '1.2.0'], { CHANGELOG_HEADING_PREFIX: 'v' }),
+    ).toMatchObject({ headingPrefix: 'v' });
+    expect(configError(() => resolveConfig(['check', '--heading-prefix', 'v'], {})).message).toBe(
+      '--heading-prefix only applies to "changelog release".',
+    );
   });
 
   it('rejects an unknown locale', () => {

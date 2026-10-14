@@ -10,9 +10,13 @@ inputs:
     description: '`check` validates the fragments (and requires one on pull requests when `require-paths` is set). `release` folds them into CHANGELOG.md under `version`, sets the version of `package.json`, commits, tags, pushes and creates the GitHub release.'
     required: true
   version:
-    description: '`release`: `auto` computes the next version from the entries and the highest version tag; `patch`, `minor` or `major` bumps that tag; any other value is the version, written as given (e.g. `1.2.0`).'
+    description: '`release`: `auto` computes the next version from the entries and the highest version tag; `calver` gives `YYYY.M.MICRO` from the date and the tags of its month; `patch`, `minor` or `major` bumps that tag; any other value is the version, written as given (e.g. `1.2.0`).'
     required: false
     default: 'auto'
+  heading-prefix:
+    description: '`release`: text before the version in the `CHANGELOG.md` heading, not in the tag (`v` gives `## v1.2.0`).'
+    required: false
+    default: ''
   commit-message:
     description: '`release`: message of the release commit; `{version}` is replaced by the version.'
     required: false
@@ -76,6 +80,7 @@ runs:
         GITHUB_TOKEN: ${{ inputs.github-token }}
         CHANGELOG_COMMAND: ${{ inputs.command }}
         CHANGELOG_RELEASE_VERSION: ${{ inputs.version }}
+        CHANGELOG_HEADING_PREFIX: ${{ inputs.heading-prefix }}
         CHANGELOG_REQUIRE_PATHS: ${{ inputs.require-paths }}
         CHANGELOG_SKIP_LABEL: ${{ inputs.skip-label }}
         CHANGELOG_SKIP_AUTHORS: ${{ inputs.skip-authors }}

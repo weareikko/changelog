@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ChangeLevel } from './changelog.js';
 import { tableGit } from './test-utils.js';
-import { type Bump, findVersionTag, nextVersion, resolveVersions } from './version.js';
+import { type Bump, findVersionTag, nextCalVer, nextVersion, resolveVersions } from './version.js';
 
 /** The next version of `current` (stable `stable`) with this prerelease file. */
 function next(
@@ -164,5 +164,20 @@ describe('resolveVersions', () => {
       current: '0.1.0-rc.0',
       stable: '0.0.0',
     });
+  });
+});
+
+describe('nextCalVer', () => {
+  it('counts the releases of the month from the tags, with or without v', async () => {
+    const git = tableGit({
+      'tag --merged HEAD': '2026.x\n2026.9.7\n2026.10.0\nv2026.10.1\n2026.10.12-rc.0\n2026.1.5\n',
+    });
+    expect(await nextCalVer('2026-10-14', git)).toBe('2026.10.2');
+  });
+
+  it('starts each month at 0, without a leading zero', async () => {
+    const git = tableGit({ 'tag --merged HEAD': '2026.9.7\n' });
+    expect(await nextCalVer('2026-10-01', git)).toBe('2026.10.0');
+    expect(await nextCalVer('2027-01-01', git)).toBe('2027.1.0');
   });
 });

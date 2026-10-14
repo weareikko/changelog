@@ -72,7 +72,7 @@ When the run has no open pull or merge request, `check` only validates the fragm
 
 ## `release`
 
-`release --version <version>` validates all fragments first. If one is invalid, it fails and changes nothing. Otherwise it inserts `## <version> - <YYYY-MM-DD>` before the latest release in `CHANGELOG.md` and deletes the fragments that it used. It fails if `CHANGELOG.md` already has a section for that version. The version is written as given (`1.2.0` or `v1.2.0`).
+`release --version <version>` validates all fragments first. If one is invalid, it fails and changes nothing. Otherwise it inserts `## <version> - <YYYY-MM-DD>` before the latest release in `CHANGELOG.md` and deletes the fragments that it used. It fails if `CHANGELOG.md` already has a section for that version. The version is written as given (`1.2.0` or `v1.2.0`). `--heading-prefix v` writes `## v1.2.0` and keeps the version (and the tag) `1.2.0`.
 
 For each fragment, `release` finds the commit that added it (`git log --diff-filter=A`) and asks the API which merged pull or merge request contains that commit. When the run knows its branch (`GITHUB_REF`, `CI_COMMIT_BRANCH`), a pull or merge request merged into that branch comes first. Otherwise, any merged pull or merge request counts: a stack merged with `gh stack merge` keeps the base branch of each pull request.
 
@@ -106,6 +106,10 @@ A breaking entry starts with one of these markers, in any case, after an optiona
 
 When there is nothing to release, `release --version auto` (or a bump) changes no file, writes `changed=false` and an empty `version`, and exits with 0.
 
+### CalVer
+
+`release --version calver` gives a [CalVer](https://calver.org/) version `YYYY.M.MICRO`, for example `2026.10.2`: the year and the month of `--date` (no leading zero), and `MICRO`, one more than the highest `YYYY.M.MICRO` tag of that month reachable from `HEAD` (`v2026.10.1` counts too), else 0. It is a valid semantic version, so `npm version` accepts it. Like `auto`, it releases only when there are entries: without them, `version` is empty. It ignores `.changelog/prerelease` and does not accept `--current`.
+
 ### Prereleases
 
 The file `.changelog/prerelease` holds one line: the prerelease identifier, for example `alpha`, `beta` or `rc` (letters, digits and hyphens, not only digits). It is not a fragment: `release` never deletes it, and `check` validates it. With this file, `release --version auto` releases prereleases. The bump comes from the entries, with the rules above, from the latest stable version tag (`S`):
@@ -136,24 +140,25 @@ The CLI only edits files. Writing the version in your package files, committing,
 
 ## Options
 
-| Option                      | Command   | Default                                          | Environment variable        | Description                                                                                                      |
-| --------------------------- | --------- | ------------------------------------------------ | --------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `--require-paths <globs>`   | `check`   | none                                             | `CHANGELOG_REQUIRE_PATHS`   | Globs, one per line or comma-separated. Matching changes require a fragment.                                     |
-| `--codequality <file>`      | `check`   | none                                             |                             | Write a [GitLab Code Quality report](#gitlab-ci) of the errors.                                                  |
-| `--version <version\|auto>` | `release` | required                                         |                             | Version heading, `auto` or `patch`, `minor`, `major`: see [Automatic version](#automatic-version).               |
-| `--current <version>`       | `release` | the previous tag, else `0.0.0`                   | `CHANGELOG_CURRENT_VERSION` | With `--version auto` or a bump: the version to bump.                                                            |
-| `--date <YYYY-MM-DD>`       | `release` | today                                            |                             | Date of the version heading.                                                                                     |
-| `--notes-file <file>`       | `release` | none                                             |                             | Write the new section without its heading (empty when nothing changed).                                          |
-| `--dotenv <file>`           | `release` | none                                             |                             | Write `CHANGELOG_CHANGED=true\|false` and `CHANGELOG_VERSION=<version>` (the released version).                  |
-| `--skip-label <label>`      | both      | `no-changelog`                                   | `CHANGELOG_SKIP_LABEL`      | Label that lifts the fragment requirement and skips a bot entry.                                                 |
-| `--skip-authors <names>`    | both      | `renovate[bot]` on GitHub, none on GitLab        | `CHANGELOG_SKIP_AUTHORS`    | Logins or usernames, one per line or comma-separated. An empty value means none.                                 |
-| `--locale en\|fr`           | both      | `en`                                             | `CHANGELOG_LOCALE`          | Section names.                                                                                                   |
-| `--platform github\|gitlab` | both      | detected                                         | `CHANGELOG_PLATFORM`        | `github` in GitHub Actions; `gitlab` when `GITLAB_CI`, `CI_PROJECT_ID` or `CI_SERVER_URL` is set; else `github`. |
-| `--project <id\|path>`      | both      | `CI_PROJECT_ID`                                  |                             | GitLab project.                                                                                                  |
-| `--mr <iid>`                | `check`   | `CI_MERGE_REQUEST_IID`                           |                             | GitLab merge request.                                                                                            |
-| `--gitlab-url <url>`        | both      | `CI_SERVER_URL`, else `https://$CI_SERVER_HOST`  |                             | GitLab instance.                                                                                                 |
-| `--gitlab-token <token>`    | both      | `GITLAB_TOKEN`, `GLAB_CLI_TOKEN`, `CI_JOB_TOKEN` |                             | GitLab token. See [Tokens](#tokens).                                                                             |
-| `--github-token <token>`    | both      | `GITHUB_TOKEN`                                   |                             | GitHub token.                                                                                                    |
+| Option                      | Command   | Default                                          | Environment variable        | Description                                                                                                                              |
+| --------------------------- | --------- | ------------------------------------------------ | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `--require-paths <globs>`   | `check`   | none                                             | `CHANGELOG_REQUIRE_PATHS`   | Globs, one per line or comma-separated. Matching changes require a fragment.                                                             |
+| `--codequality <file>`      | `check`   | none                                             |                             | Write a [GitLab Code Quality report](#gitlab-ci) of the errors.                                                                          |
+| `--version <version\|auto>` | `release` | required                                         |                             | Version heading, `auto` or `patch`, `minor`, `major` (see [Automatic version](#automatic-version)), or `calver` (see [CalVer](#calver)). |
+| `--current <version>`       | `release` | the previous tag, else `0.0.0`                   | `CHANGELOG_CURRENT_VERSION` | With `--version auto` or a bump: the version to bump.                                                                                    |
+| `--heading-prefix <prefix>` | `release` | none                                             | `CHANGELOG_HEADING_PREFIX`  | Text before the version in the heading, not in the version: `v` gives `## v1.2.0`.                                                       |
+| `--date <YYYY-MM-DD>`       | `release` | today                                            |                             | Date of the version heading, and of the `calver` version.                                                                                |
+| `--notes-file <file>`       | `release` | none                                             |                             | Write the new section without its heading (empty when nothing changed).                                                                  |
+| `--dotenv <file>`           | `release` | none                                             |                             | Write `CHANGELOG_CHANGED=true\|false` and `CHANGELOG_VERSION=<version>` (the released version).                                          |
+| `--skip-label <label>`      | both      | `no-changelog`                                   | `CHANGELOG_SKIP_LABEL`      | Label that lifts the fragment requirement and skips a bot entry.                                                                         |
+| `--skip-authors <names>`    | both      | `renovate[bot]` on GitHub, none on GitLab        | `CHANGELOG_SKIP_AUTHORS`    | Logins or usernames, one per line or comma-separated. An empty value means none.                                                         |
+| `--locale en\|fr`           | both      | `en`                                             | `CHANGELOG_LOCALE`          | Section names.                                                                                                                           |
+| `--platform github\|gitlab` | both      | detected                                         | `CHANGELOG_PLATFORM`        | `github` in GitHub Actions; `gitlab` when `GITLAB_CI`, `CI_PROJECT_ID` or `CI_SERVER_URL` is set; else `github`.                         |
+| `--project <id\|path>`      | both      | `CI_PROJECT_ID`                                  |                             | GitLab project.                                                                                                                          |
+| `--mr <iid>`                | `check`   | `CI_MERGE_REQUEST_IID`                           |                             | GitLab merge request.                                                                                                                    |
+| `--gitlab-url <url>`        | both      | `CI_SERVER_URL`, else `https://$CI_SERVER_HOST`  |                             | GitLab instance.                                                                                                                         |
+| `--gitlab-token <token>`    | both      | `GITLAB_TOKEN`, `GLAB_CLI_TOKEN`, `CI_JOB_TOKEN` |                             | GitLab token. See [Tokens](#tokens).                                                                                                     |
+| `--github-token <token>`    | both      | `GITHUB_TOKEN`                                   |                             | GitHub token.                                                                                                                            |
 
 Flags win over environment variables. `changelog --help` shows the options and `changelog --version` shows the version. The exit code is 0 on success, 1 when a check or a release fails, and 2 for a usage error.
 
@@ -269,7 +274,8 @@ A tag pushed with `GITHUB_TOKEN` starts no workflow, so publish in a job that `n
 | Input            | Default               | Description                                                                                                                                           |
 | ---------------- | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `command`        | required              | `check` or `release`.                                                                                                                                 |
-| `version`        | `auto`                | `release`: `auto`, `patch`, `minor`, `major`, or a version written as given.                                                                          |
+| `version`        | `auto`                | `release`: `auto`, `calver`, `patch`, `minor`, `major`, or a version written as given.                                                                |
+| `heading-prefix` | none                  | `release`: text before the version in the `CHANGELOG.md` heading, not in the tag (`v` gives `## v1.2.0`).                                             |
 | `commit-message` | `Release {version}`   | `release`: message of the release commit. `{version}` is replaced by the version.                                                                     |
 | `moving-tags`    | `false`               | `release`: `true` moves the major and minor tags to each stable version, for a repository that is a GitHub Action.                                    |
 | `require-paths`  | none                  | `check`: globs, one per line or comma-separated. Matching changes require a fragment.                                                                 |
