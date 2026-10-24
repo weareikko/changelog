@@ -41,6 +41,6 @@ jobs:
       # The composite action checks out the repo itself (checkout: true default).
       # `model` is an input rather than an env entry because the action sets
       # CODE_REVIEW_MODEL from it.
-      - uses: weareikko/code-review@0b989f4fcbca652adc0314c12d7d5af53c793409 # 0.10.3
+      - uses: weareikko/code-review@a296d9b971d2a8503b5390024e76e59d7ab52652 # 0.11.0
         with:
           model: ${{ vars.CODE_REVIEW_MODEL }}
